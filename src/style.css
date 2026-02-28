@@ -1,0 +1,172 @@
+/* Minimal styling - let GTK handle most of it */
+
+/* LCD-style display for mine counter and timer */
+.lcd-display {
+    font-family: monospace;
+    font-size: 18px;
+    font-weight: bold;
+    padding: 4px 8px;
+}
+
+/* Cell buttons - fixed square size */
+.cell {
+    padding: 0;
+    margin: 1px;
+    font-weight: bold;
+    font-size: 14px;
+}
+/* Double/triple emoji need to shrink to fit */
+.cell-flagged-2 label, .cell-flagged-3 label,
+.cell-mine-2 label, .cell-mine-3 label {
+    font-size: 10px;
+}
+
+/* Marathon variant - unrevealed/flagged cells in the bottom row (danger zone) */
+.cell-bottom {
+    background-color: mix(@theme_bg_color, #ff4400, 0.20);
+    background-image: none;
+}
+
+/* Chain variant - unrevealed tile reachable from the revealed frontier */
+.cell-reachable {
+    background-color: mix(@theme_bg_color, #4488ff, 0.15);
+    background-image: none;
+}
+
+/* Revealed cells */
+.cell-revealed {
+    background-color: mix(@theme_bg_color, #808080, 0.3);
+    background-image: none;
+}
+
+/* Positive mine - muted red */
+.cell-mine {
+    background-color: #994444;
+    background-image: none;
+    color: white;
+}
+
+/* Negative mine - exact bit-inversion of #994444, bomb flipped upside-down */
+.cell-negative-mine {
+    background-color: #66bbbb;
+    background-image: none;
+    color: #1a1a1a;
+}
+.cell-negative-mine label {
+    transform: rotate(180deg);
+}
+
+/* Negative flag - same 🚩 emoji rotated upside-down and color-inverted */
+.cell-flagged-negative label {
+    transform: rotate(180deg);
+    filter: invert(1);
+}
+
+/* Positive number colors (1–8: classic, 9–16: saturated, 17–24: bold) */
+.cell-1  label { color: mix(@theme_fg_color, #0066ff, 0.5); }
+.cell-2  label { color: mix(@theme_fg_color, #00cc00, 0.5); }
+.cell-3  label { color: mix(@theme_fg_color, #ff0000, 0.5); }
+.cell-4  label { color: mix(@theme_fg_color, #0000cc, 0.5); }
+.cell-5  label { color: #ff8000; }
+.cell-6  label { color: #00cccc; }
+.cell-7  label { color: @theme_fg_color; }
+.cell-8  label { color: #808080; }
+.cell-9  label { color: #0099ff; }
+.cell-10 label { color: #00ee00; }
+.cell-11 label { color: #ff3333; }
+.cell-12 label { color: #3333ff; }
+.cell-13 label { color: #ff9900; }
+.cell-14 label { color: #00ffcc; }
+.cell-15 label { color: #cc00ff; }
+.cell-16 label { color: #aaaaaa; }
+.cell-17 label { color: #33bbff; font-weight: 900; }
+.cell-18 label { color: #33ff33; font-weight: 900; }
+.cell-19 label { color: #ff6666; font-weight: 900; }
+.cell-20 label { color: #6666ff; font-weight: 900; }
+.cell-21 label { color: #ffbb00; font-weight: 900; }
+.cell-22 label { color: #00ffff; font-weight: 900; }
+.cell-23 label { color: #ee00ff; font-weight: 900; }
+.cell-24 label { color: #ffffff; font-weight: 900; }
+
+/* Blindsweeper - faint 0 on empty revealed cells to distinguish from unrevealed */
+.cell-zero label { opacity: 0.25; }
+
+/* Encrypted - random unicode shown in muted grey; wrong-answer flash */
+.cell-encrypted label { color: #888888; }
+.enc-equation { font-family: monospace; font-size: 13px; }
+.enc-wrong    { color: #cc3333; font-weight: bold; }
+.enc-peek     { color: #44cc44; font-weight: bold; font-size: 18px; }
+.cell-locked  { background-color: mix(@theme_bg_color, #ffaa00, 0.25); background-image: none; }
+.cell-mine.cell-locked          { background-color: #994444; background-image: none; color: white; }
+.cell-negative-mine.cell-locked { background-color: #66bbbb; background-image: none; color: #1a1a1a; }
+
+/* ── RGB variant ─────────────────────────────────────────────────────────── */
+
+/* Channel selector button */
+.channel-btn {
+    font-weight: bold;
+    font-size: 16px;
+    min-width: 100px;
+    padding: 4px 20px;
+}
+.channel-btn-r { background-color: rgba(221, 68, 68, 0.18); background-image: none; color: #dd4444; }
+.channel-btn-g { background-color: rgba(68, 221, 68, 0.18); background-image: none; color: #44dd44; }
+.channel-btn-b { background-color: rgba(102,136,255, 0.18); background-image: none; color: #6688ff; }
+
+/* RGB mine backgrounds */
+.cell-mine-r { background-color: #994444; background-image: none; color: white; }
+.cell-mine-g { background-color: #449944; background-image: none; color: white; }
+.cell-mine-b { background-color: #444499; background-image: none; color: white; }
+
+/* RGB flag labels - R emoji is already red; G and B are hue-shifted */
+.cell-flag-g label { filter: hue-rotate(120deg); }
+.cell-flag-b label { filter: hue-rotate(240deg); }
+
+/* RGB adjacent-count labels */
+.cell-rgb-r label { color: #dd4444; }
+.cell-rgb-g label { color: #44dd44; }
+.cell-rgb-b label { color: #6688ff; }
+
+/* Negative number colors - same color rules as positives, then invert(1) for bitwise opposite */
+.cell-neg-1 label { color: mix(@theme_fg_color, #0066ff, 0.5); filter: invert(1); }
+.cell-neg-2 label { color: mix(@theme_fg_color, #00cc00, 0.5); filter: invert(1); }
+.cell-neg-3 label { color: mix(@theme_fg_color, #ff0000, 0.5); filter: invert(1); }
+.cell-neg-4 label { color: mix(@theme_fg_color, #0000cc, 0.5); filter: invert(1); }
+.cell-neg-5 label { color: #ff8000; filter: invert(1); }
+.cell-neg-6 label { color: #00cccc; filter: invert(1); }
+.cell-neg-7 label { color: @theme_fg_color; filter: invert(1); }
+.cell-neg-8 label { color: #808080; filter: invert(1); }
+
+/* ── About window ────────────────────────────────────────────────────────── */
+.about-name    { font-size: 22px; font-weight: bold; }
+.about-version { font-size: 13px; opacity: 0.5; }
+.about-desc    { font-size: 13px; opacity: 0.72; }
+
+/* ── Help window ─────────────────────────────────────────────────────────── */
+
+.help-title {
+    font-size: 30px;
+    font-weight: bold;
+}
+
+.help-subtitle {
+    font-size: 14px;
+    opacity: 0.55;
+}
+
+.help-tier {
+    font-size: 17px;
+    font-weight: bold;
+    color: #cc5555;
+    margin-top: 2px;
+}
+
+.help-variant-name {
+    font-size: 15px;
+    font-weight: bold;
+}
+
+.help-variant-desc {
+    font-size: 14px;
+    opacity: 0.72;
+}
