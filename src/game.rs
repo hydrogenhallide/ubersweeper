@@ -327,26 +327,6 @@ impl Game {
 
         if flag_count != self.grid[y][x].adjacent_mines { return false; }
 
-        // Verify every flagged neighbour is correctly placed on the right kind of mine.
-        // This ensures chord only fires when all flags are accurate, not just numerically matching.
-        for dy in -1_isize..=1 {
-            for dx in -1_isize..=1 {
-                if dx == 0 && dy == 0 { continue; }
-                let nx = x as isize + dx;
-                let ny = y as isize + dy;
-                if nx < 0 || nx >= self.width as isize || ny < 0 || ny >= self.height as isize { continue; }
-                let nc = &self.grid[ny as usize][nx as usize];
-                let correct = match nc.state {
-                    CellState::Flagged         => nc.mines == 1 && !nc.is_negative,
-                    CellState::FlaggedNegative => nc.mines == 1 && nc.is_negative,
-                    CellState::Flagged2        => nc.mines == 2,
-                    CellState::Flagged3        => nc.mines == 3,
-                    _                          => true,
-                };
-                if !correct { return false; }
-            }
-        }
-
         let mut revealed = false;
         for dy in -1_isize..=1 {
             for dx in -1_isize..=1 {
