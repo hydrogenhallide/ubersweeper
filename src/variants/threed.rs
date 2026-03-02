@@ -14,15 +14,15 @@ use super::{BoardContext, start_timer, stop_timer};
 // ---------------------------------------------------------------------------
 // World-space layout  (unit cube per cell)
 // ---------------------------------------------------------------------------
-const W_STEP:     f64 = 1.0;     // cell centre-to-centre spacing
-const W_HALF:     f64 = 0.40;    // half-edge of visible face (gap = 0.10 on each side)
-const DISPLAY:    f64 = 280.0;   // widget size in pixels (square)
-const INIT_AZ:    f64 = -0.55;   // initial azimuth  ≈ –31° → camera top-right-front
-const INIT_EL:    f64 =  0.40;   // initial elevation ≈  23°
-const DRAG_SENS:  f64 =  0.008;  // radians per drag-pixel
-const CLICK_PX:   f64 =  5.0;    // drag distance below which we treat it as a click
-const BEVEL:      f64 =  0.10;   // rounded-edge bevel width in world units
-const BEVEL_N:    usize = 5;     // arc segments per rounded edge
+const W_STEP:    f64   = 1.0;
+const W_HALF:    f64   = 0.40;
+const DISPLAY:   f64   = 280.0;
+const INIT_AZ:   f64   = -0.55;
+const INIT_EL:   f64   =  0.40;
+const DRAG_SENS: f64   =  0.008;
+const CLICK_PX:  f64   =  5.0;
+const BEVEL:     f64   =  0.10;
+const MAX_BEVEL: usize =  4;   // arc segments per edge/corner at full LOD
 
 // ---------------------------------------------------------------------------
 // 3-D game (self-contained, does not touch the 2-D Game)
@@ -33,7 +33,9 @@ struct Cell3D { is_mine: bool, state: CellState, adjacent: u8 }
 impl Cell3D { fn new() -> Self { Cell3D { is_mine: false, state: CellState::Hidden, adjacent: 0 } } }
 
 struct Game3D {
-    size:           usize,
+    sx:             usize,
+    sy:             usize,
+    sz:             usize,
     grid:           Vec<Vec<Vec<Cell3D>>>,   // [z][y][x]
     pub state:      GameState,
     mines_total:    u32,
@@ -43,24 +45,28 @@ struct Game3D {
 }
 
 impl Game3D {
-    fn new(size: usize, mines: u32) -> Self {
+    fn new(sx: usize, sy: usize, sz: usize, mines: u32) -> Self {
+        let total = (sx * sy * sz) as u32;
+        let mines = mines.min(total.saturating_sub(28));
         Game3D {
-            size,
-            grid: vec![vec![vec![Cell3D::new(); size]; size]; size],
+            sx, sy, sz,
+            grid: vec![vec![vec![Cell3D::new(); sx]; sy]; sz],
             state: GameState::Ready,
             mines_total: mines,
             flags_placed: 0,
             cells_revealed: 0,
-            total_safe: (size * size * size) as u32 - mines,
+            total_safe: total - mines,
         }
     }
 
-    fn nb(x: usize, y: usize, z: usize, s: usize) -> Vec<(usize, usize, usize)> {
+    fn nb(&self, x: usize, y: usize, z: usize) -> Vec<(usize, usize, usize)> {
         let mut v = Vec::with_capacity(26);
         for dz in -1i32..=1 { for dy in -1i32..=1 { for dx in -1i32..=1 {
             if dx == 0 && dy == 0 && dz == 0 { continue; }
             let (nx, ny, nz) = (x as i32 + dx, y as i32 + dy, z as i32 + dz);
-            if nx >= 0 && nx < s as i32 && ny >= 0 && ny < s as i32 && nz >= 0 && nz < s as i32 {
+            if nx >= 0 && nx < self.sx as i32
+            && ny >= 0 && ny < self.sy as i32
+            && nz >= 0 && nz < self.sz as i32 {
                 v.push((nx as usize, ny as usize, nz as usize));
             }
         }}}
@@ -70,10 +76,11 @@ impl Game3D {
     fn place_mines(&mut self, ax: usize, ay: usize, az: usize) {
         use rand::Rng;
         let mut rng = rand::thread_rng();
-        let s = self.size;
         let mut placed = 0u32;
         while placed < self.mines_total {
-            let (x, y, z) = (rng.gen_range(0..s), rng.gen_range(0..s), rng.gen_range(0..s));
+            let x = rng.gen_range(0..self.sx);
+            let y = rng.gen_range(0..self.sy);
+            let z = rng.gen_range(0..self.sz);
             if self.grid[z][y][x].is_mine { continue; }
             if (x as i32 - ax as i32).abs() <= 1
             && (y as i32 - ay as i32).abs() <= 1
@@ -81,26 +88,29 @@ impl Game3D {
             self.grid[z][y][x].is_mine = true;
             placed += 1;
         }
-        for z in 0..s { for y in 0..s { for x in 0..s {
-            if self.grid[z][y][x].is_mine { continue; }
-            self.grid[z][y][x].adjacent = Self::nb(x, y, z, s).into_iter()
-                .filter(|&(nx, ny, nz)| self.grid[nz][ny][nx].is_mine).count() as u8;
+        for gz in 0..self.sz { for gy in 0..self.sy { for gx in 0..self.sx {
+            if self.grid[gz][gy][gx].is_mine { continue; }
+            self.grid[gz][gy][gx].adjacent = self.nb(gx, gy, gz).iter()
+                .filter(|&&(nx, ny, nz)| self.grid[nz][ny][nx].is_mine).count() as u8;
         }}}
     }
 
     fn reveal(&mut self, x: usize, y: usize, z: usize) {
-        if self.state == GameState::Ready { self.place_mines(x, y, z); self.state = GameState::Playing; }
+        if self.state == GameState::Ready {
+            self.place_mines(x, y, z);
+            self.state = GameState::Playing;
+        }
         if !matches!(self.state, GameState::Playing) { return; }
         if self.grid[z][y][x].state != CellState::Hidden { return; }
         if self.grid[z][y][x].is_mine {
             self.state = GameState::Lost;
-            let s = self.size;
-            for gz in 0..s { for gy in 0..s { for gx in 0..s {
-                if self.grid[gz][gy][gx].is_mine { self.grid[gz][gy][gx].state = CellState::Revealed; }
+            for gz in 0..self.sz { for gy in 0..self.sy { for gx in 0..self.sx {
+                if self.grid[gz][gy][gx].is_mine {
+                    self.grid[gz][gy][gx].state = CellState::Revealed;
+                }
             }}}
             return;
         }
-        let s = self.size;
         let mut q: VecDeque<(usize, usize, usize)> = VecDeque::new();
         q.push_back((x, y, z));
         while let Some((cx, cy, cz)) = q.pop_front() {
@@ -108,8 +118,11 @@ impl Game3D {
             self.grid[cz][cy][cx].state = CellState::Revealed;
             self.cells_revealed += 1;
             if self.grid[cz][cy][cx].adjacent == 0 {
-                for (nx, ny, nz) in Self::nb(cx, cy, cz, s) {
-                    if self.grid[nz][ny][nx].state == CellState::Hidden { q.push_back((nx, ny, nz)); }
+                let nb = self.nb(cx, cy, cz);
+                for (nx, ny, nz) in nb {
+                    if self.grid[nz][ny][nx].state == CellState::Hidden {
+                        q.push_back((nx, ny, nz));
+                    }
                 }
             }
         }
@@ -126,11 +139,14 @@ impl Game3D {
 
     fn chord(&mut self, x: usize, y: usize, z: usize) -> bool {
         if self.grid[z][y][x].state != CellState::Revealed { return false; }
-        let s = self.size;
-        let nb = Self::nb(x, y, z, s);
-        let flags = nb.iter().filter(|&&(nx, ny, nz)| self.grid[nz][ny][nx].state == CellState::Flagged).count() as u8;
+        let nb = self.nb(x, y, z);
+        let flags = nb.iter()
+            .filter(|&&(nx, ny, nz)| self.grid[nz][ny][nx].state == CellState::Flagged)
+            .count() as u8;
         if flags != self.grid[z][y][x].adjacent { return false; }
-        let to: Vec<_> = nb.into_iter().filter(|&(nx, ny, nz)| self.grid[nz][ny][nx].state == CellState::Hidden).collect();
+        let to: Vec<_> = nb.into_iter()
+            .filter(|&(nx, ny, nz)| self.grid[nz][ny][nx].state == CellState::Hidden)
+            .collect();
         for (nx, ny, nz) in to { self.reveal(nx, ny, nz); }
         true
     }
@@ -142,37 +158,35 @@ impl Game3D {
 // Projection math
 // ---------------------------------------------------------------------------
 
-// Orthographic projection: rotate world (Y by az, then X by el), project to screen.
-// Returns (screen_dx, screen_dy, depth).
-// depth = dot(world_point, view_dir): higher = closer to camera → draw last.
 fn proj(wx: f64, wy: f64, wz: f64, az: f64, el: f64) -> (f64, f64, f64) {
     let rx  =  wx * az.cos() + wz * az.sin();
     let rz  = -wx * az.sin() + wz * az.cos();
     let ry2 =  wy * el.cos() - rz * el.sin();
     let rz2 =  wy * el.sin() + rz * el.cos();
-    (rx, -ry2, rz2)   // screen: (rx, -ry2);  depth: rz2
+    (rx, -ry2, rz2)
 }
 
-// Direction from scene toward camera in world space.
-// (Derived by applying the inverse world rotation to the camera's +Z axis.)
 fn view_dir(az: f64, el: f64) -> (f64, f64, f64) {
     (-az.sin() * el.cos(), el.sin(), az.cos() * el.cos())
 }
 
-// Scale factor: world units → screen pixels, chosen so the cube diagonal fits DISPLAY.
-fn scale_for(size: usize) -> f64 {
-    let diag = (size as f64 - 1.0) * 3_f64.sqrt();
+/// Scale so the actual 3-D diagonal of the grid fits within DISPLAY.
+fn scale_for(sx: usize, sy: usize, sz: usize) -> f64 {
+    let dx = sx.saturating_sub(1) as f64;
+    let dy = sy.saturating_sub(1) as f64;
+    let dz = sz.saturating_sub(1) as f64;
+    let diag = (dx*dx + dy*dy + dz*dz).sqrt();
     DISPLAY * 0.82 / diag.max(1.0)
 }
 
-fn cell_world(gx: usize, gy: usize, gz: usize, half: f64) -> (f64, f64, f64) {
-    ((gx as f64 - half) * W_STEP,
-     (gy as f64 - half) * W_STEP,
-     (gz as f64 - half) * W_STEP)
+fn cell_world(gx: usize, gy: usize, gz: usize, hx: f64, hy: f64, hz: f64) -> (f64, f64, f64) {
+    ((gx as f64 - hx) * W_STEP,
+     (gy as f64 - hy) * W_STEP,
+     (gz as f64 - hz) * W_STEP)
 }
 
 // ---------------------------------------------------------------------------
-// Rendering
+// Rendering helpers
 // ---------------------------------------------------------------------------
 
 fn fill_quad(cr: &cairo::Context, q: [(f64, f64); 4]) {
@@ -212,13 +226,13 @@ fn num_color(n: u8) -> (f64, f64, f64) {
     }
 }
 
-fn draw_label(cr: &cairo::Context, cx: f64, cy: f64, text: &str, r: f64, g: f64, b: f64, a: f64, font_px: f64) {
+fn draw_label(cr: &cairo::Context, cx: f64, cy: f64, text: &str,
+              r: f64, g: f64, b: f64, a: f64, font_px: f64) {
     let layout = pangocairo::functions::create_layout(cr);
     layout.set_text(text);
     let mut fd = pango::FontDescription::new();
     fd.set_family("Sans");
     fd.set_weight(pango::Weight::Bold);
-    // Convert screen pixels to pango units (1pt = 1px at 72dpi; 1px ≈ 0.75pt at 96dpi).
     fd.set_size((font_px * 0.72 * pango::SCALE as f64) as i32);
     layout.set_font_description(Some(&fd));
     let (lw, lh) = layout.pixel_size();
@@ -227,20 +241,26 @@ fn draw_label(cr: &cairo::Context, cx: f64, cy: f64, text: &str, r: f64, g: f64,
     pangocairo::functions::show_layout(cr, &layout);
 }
 
-// Draw one cell as a rounded-edge cube at world position (wx,wy,wz).
-// All 6 faces, 12 edge strips and 8 corner patches are considered; each
-// primitive is individually back-face culled so edges disappear gradually.
+// ---------------------------------------------------------------------------
+// Cube renderer with per-cell LOD
+//
+// bevel_n = 0 : flat box only (6 faces, no edge/corner geometry)
+// bevel_n = 1…MAX_BEVEL : arc segments per rounded edge/corner
+// ---------------------------------------------------------------------------
 fn draw_cube(
-    cr:    &cairo::Context,
-    cell:  &Cell3D,
+    cr:      &cairo::Context,
+    cell:    &Cell3D,
     wx: f64, wy: f64, wz: f64,
     az: f64, el: f64,
     scx: f64, scy: f64,
     scale: f64,
+    bevel_n: usize,
 ) {
     let h  = W_HALF;
     let b  = BEVEL;
-    let fh = h - b;
+    // When there are no bevel strips, extend flat faces to full half-size so
+    // there's no visible gap at the edges.
+    let fh = if bevel_n > 0 { h - b } else { h };
     let vd = view_dir(az, el);
 
     let p = |dx: f64, dy: f64, dz: f64| -> (f64, f64) {
@@ -258,8 +278,6 @@ fn draw_cube(
         CellState::Revealed                 => (0.14, 0.14, 0.14),
         _                                   => (0.24, 0.24, 0.24),
     };
-
-    // Brightness from surface normal, fitted to: lz(0,0,1)=1.0  ly(0,1,0)=1.30  lx(1,0,0)=0.65
     let lit = |_nx: f64, ny: f64, nz: f64| -> f64 {
         (0.65 + 0.65 * ny + 0.35 * nz).max(0.05)
     };
@@ -267,9 +285,7 @@ fn draw_cube(
         cr.set_source_rgba((br*l).min(1.0), (bg*l).min(1.0), (bb*l).min(1.0), alpha);
     };
 
-    let n = BEVEL_N;
-
-    // ── 6 flat faces - per-face back-face cull ────────────────────────────────
+    // ── 6 flat faces ──────────────────────────────────────────────────────────
     for ez in [1.0_f64, -1.0] {
         if ez * vd.2 < 0.02 { continue; }
         let q = [p(-fh,-fh,ez*h), p(fh,-fh,ez*h), p(fh,fh,ez*h), p(-fh,fh,ez*h)];
@@ -289,8 +305,9 @@ fn draw_cube(
         cr.set_source_rgba(0.5, 0.5, 0.5, alpha * 0.4); outline_quad(cr, q);
     }
 
-    // ── 12 edge strips - per-quad back-face cull ─────────────────────────────
-    // Z-Y edges (run along X, 4 variants ±ez ±ey)
+    // ── 12 edge strips (skipped when bevel_n == 0) ────────────────────────────
+    let n = bevel_n;
+    // Z-Y edges
     for ez in [1.0_f64, -1.0] { for ey in [1.0_f64, -1.0] {
         for i in 0..n {
             let t0 = (i       as f64 / n as f64) * PI * 0.5;
@@ -304,7 +321,7 @@ fn draw_cube(
             fill_quad(cr, [p(-fh,y0,z0), p(fh,y0,z0), p(fh,y1,z1), p(-fh,y1,z1)]);
         }
     }}
-    // Z-X edges (run along Y, 4 variants ±ez ±ex)
+    // Z-X edges
     for ez in [1.0_f64, -1.0] { for ex in [1.0_f64, -1.0] {
         for i in 0..n {
             let t0 = (i       as f64 / n as f64) * PI * 0.5;
@@ -318,7 +335,7 @@ fn draw_cube(
             fill_quad(cr, [p(x0,-fh,z0), p(x0,fh,z0), p(x1,fh,z1), p(x1,-fh,z1)]);
         }
     }}
-    // Y-X edges (run along Z, 4 variants ±ey ±ex)
+    // Y-X edges
     for ey in [1.0_f64, -1.0] { for ex in [1.0_f64, -1.0] {
         for i in 0..n {
             let t0 = (i       as f64 / n as f64) * PI * 0.5;
@@ -333,21 +350,19 @@ fn draw_cube(
         }
     }}
 
-    // ── 8 spherical corner patches - per-triangle back-face cull ─────────────
+    // ── 8 spherical corner patches (skipped when bevel_n == 0) ────────────────
+    let cn = bevel_n;
     for ez in [1.0_f64, -1.0] { for ey in [1.0_f64, -1.0] { for ex in [1.0_f64, -1.0] {
         let (cx, cy, cz) = (ex*fh, ey*fh, ez*fh);
-        // Map barycentric (u→Y, v→X, w=1-u-v→Z) to sphere surface point.
         let spt = |u: f64, v: f64| -> (f64, f64) {
             let w = 1.0 - u - v;
             let (dx, dy, dz) = (v*ex, u*ey, w*ez);
             let len = (dx*dx + dy*dy + dz*dz).sqrt().max(1e-12);
             p(cx + b*dx/len, cy + b*dy/len, cz + b*dz/len)
         };
-        let cn = BEVEL_N;
         for i in 0..cn { for j in 0..(cn - i) {
             let (u0, u1) = (i as f64/cn as f64, (i+1) as f64/cn as f64);
             let (v0, v1) = (j as f64/cn as f64, (j+1) as f64/cn as f64);
-            // Triangle 1: (u0,v0)·(u1,v0)·(u0,v1)
             {
                 let (um, vm) = ((u0+u1+u0)/3.0, (v0+v0+v1)/3.0);
                 let wm = 1.0 - um - vm;
@@ -361,7 +376,6 @@ fn draw_cube(
                     cr.line_to(pc.0,pc.1); cr.close_path(); let _ = cr.fill();
                 }
             }
-            // Triangle 2: (u1,v0)·(u1,v1)·(u0,v1) - only inside the simplex
             if u1 + v1 <= 1.0 {
                 let (um, vm) = ((u1+u1+u0)/3.0, (v0+v1+v1)/3.0);
                 let wm = 1.0 - um - vm;
@@ -378,7 +392,7 @@ fn draw_cube(
         }}
     }}}
 
-    // ── Content label (always faces camera) ──────────────────────────────────
+    // ── Content label (always faces camera) ───────────────────────────────────
     let (fcx, fcy) = p(0.0, 0.0, 0.0);
     let font_px = h * 2.0 * scale * 0.55;
     match cell.state {
@@ -386,47 +400,93 @@ fn draw_cube(
         CellState::Revealed if cell.is_mine =>
             draw_label(cr, fcx, fcy, "💣", 0.9, 0.9, 0.9, 1.0, font_px),
         CellState::Revealed if cell.adjacent > 0 => {
-            let (nr, ng, nb) = num_color(cell.adjacent);
-            draw_label(cr, fcx, fcy, &cell.adjacent.to_string(), nr, ng, nb, alpha, font_px);
+            let (nr, ng, nb_) = num_color(cell.adjacent);
+            draw_label(cr, fcx, fcy, &cell.adjacent.to_string(), nr, ng, nb_, alpha, font_px);
         }
         _ => {}
     }
 }
 
+// ---------------------------------------------------------------------------
+// Interior culling: skip an opaque cell if all 6 face-neighbours are in-bounds,
+// inside the current slice filter, and opaque (so they fully block each face).
+// ---------------------------------------------------------------------------
+fn is_occluded(
+    game: &Game3D,
+    x: usize, y: usize, z: usize,
+    lmin: usize, lmax: usize,
+    rmin: usize, rmax: usize,
+    cmin: usize, cmax: usize,
+) -> bool {
+    if game.grid[z][y][x].state == CellState::Revealed { return false; }
+
+    let face_covered = |nx: i32, ny: i32, nz: i32| -> bool {
+        if nx < 0 || nx >= game.sx as i32 { return false; }
+        if ny < 0 || ny >= game.sy as i32 { return false; }
+        if nz < 0 || nz >= game.sz as i32 { return false; }
+        let (nx, ny, nz) = (nx as usize, ny as usize, nz as usize);
+        if nz < lmin || nz > lmax { return false; }
+        if ny < rmin || ny > rmax { return false; }
+        if nx < cmin || nx > cmax { return false; }
+        game.grid[nz][ny][nx].state != CellState::Revealed
+    };
+
+    let (ix, iy, iz) = (x as i32, y as i32, z as i32);
+    face_covered(ix-1, iy, iz) && face_covered(ix+1, iy, iz) &&
+    face_covered(ix, iy-1, iz) && face_covered(ix, iy+1, iz) &&
+    face_covered(ix, iy, iz-1) && face_covered(ix, iy, iz+1)
+}
+
+// ---------------------------------------------------------------------------
+// Board draw
+// ---------------------------------------------------------------------------
 
 fn draw_board(cr: &cairo::Context, game: &Game3D, az: f64, el: f64, w: f64, h: f64,
-              layer_min: usize, layer_max: usize,
-              row_min: usize, row_max: usize,
-              col_min: usize, col_max: usize,
+              lmin: usize, lmax: usize,
+              rmin: usize, rmax: usize,
+              cmin: usize, cmax: usize,
               zoom: f64) {
-    // Background.
     cr.set_source_rgb(0.09, 0.09, 0.09);
     let _ = cr.paint();
 
-    let s     = game.size;
+    let (sx, sy, sz) = (game.sx, game.sy, game.sz);
     let scx   = w / 2.0;
     let scy   = h / 2.0;
-    let scale = scale_for(s) * zoom;
-    let half  = (s as f64 - 1.0) / 2.0;
+    let scale = scale_for(sx, sy, sz) * zoom;
+    let hx    = (sx as f64 - 1.0) / 2.0;
+    let hy    = (sy as f64 - 1.0) / 2.0;
+    let hz    = (sz as f64 - 1.0) / 2.0;
 
-    // Sort all cells: ascending depth = farthest first (painter's algorithm).
-    let mut cells: Vec<(f64, usize, usize, usize)> = Vec::with_capacity(s * s * s);
-    for gz in 0..s { for gy in 0..s { for gx in 0..s {
-        if gz < layer_min || gz > layer_max { continue; }
-        if gy < row_min   || gy > row_max   { continue; }
-        if gx < col_min   || gx > col_max   { continue; }
-        let (wx, wy, wz) = cell_world(gx, gy, gz, half);
-        let (_, _, depth) = proj(wx, wy, wz, az, el);
-        cells.push((depth, gx, gy, gz));
-    }}}
-    cells.sort_by(|a, b| a.0.partial_cmp(&b.0).unwrap()); // ascending → far first
-
-    for (_, gx, gy, gz) in cells {
-        let (wx, wy, wz) = cell_world(gx, gy, gz, half);
-        draw_cube(cr, &game.grid[gz][gy][gx], wx, wy, wz, az, el, scx, scy, scale);
+    // Build cell list: apply slice filter and skip fully-interior opaque cells.
+    let mut cells: Vec<(f64, usize, usize, usize)> = Vec::new();
+    for gz in lmin..=lmax.min(sz.saturating_sub(1)) {
+        for gy in rmin..=rmax.min(sy.saturating_sub(1)) {
+            for gx in cmin..=cmax.min(sx.saturating_sub(1)) {
+                if is_occluded(game, gx, gy, gz, lmin, lmax, rmin, rmax, cmin, cmax) {
+                    continue;
+                }
+                let (wx, wy, wz) = cell_world(gx, gy, gz, hx, hy, hz);
+                let (_, _, depth) = proj(wx, wy, wz, az, el);
+                cells.push((depth, gx, gy, gz));
+            }
+        }
     }
 
-    // Rotation hint (only before first click).
+    // Painter's algorithm: farthest first.
+    cells.sort_by(|a, b| a.0.partial_cmp(&b.0).unwrap_or(std::cmp::Ordering::Equal));
+
+    // Map depth range → LOD: farthest cells get bevel_n=0, nearest get MAX_BEVEL.
+    let depth_min = cells.first().map(|c| c.0).unwrap_or(0.0);
+    let depth_max = cells.last().map(|c| c.0).unwrap_or(1.0);
+    let depth_range = (depth_max - depth_min).max(1e-6);
+
+    for &(depth, gx, gy, gz) in &cells {
+        let t = (depth - depth_min) / depth_range;   // 0 = farthest, 1 = nearest
+        let bevel_n = ((t * (MAX_BEVEL + 1) as f64) as usize).min(MAX_BEVEL);
+        let (wx, wy, wz) = cell_world(gx, gy, gz, hx, hy, hz);
+        draw_cube(cr, &game.grid[gz][gy][gx], wx, wy, wz, az, el, scx, scy, scale, bevel_n);
+    }
+
     if game.state == GameState::Ready {
         let layout = pangocairo::functions::create_layout(cr);
         layout.set_text("drag to rotate");
@@ -442,48 +502,51 @@ fn draw_board(cr: &cairo::Context, game: &Game3D, az: f64, el: f64, w: f64, h: f
 }
 
 // ---------------------------------------------------------------------------
-// 3-D hit test: find frontmost cell (max depth) whose projected centre is
-// within W_HALF*scale pixels of the click point.
+// Hit-test
 // ---------------------------------------------------------------------------
 
-fn hit_test_3d(mx: f64, my: f64, game: &Game3D, az: f64, el: f64, w: f64, h: f64,
-               layer_min: usize, layer_max: usize,
-               row_min: usize, row_max: usize,
-               col_min: usize, col_max: usize,
-               zoom: f64)
-    -> Option<(usize, usize, usize)>
-{
-    let s     = game.size;
+fn hit_test_3d(
+    mx: f64, my: f64,
+    game: &Game3D,
+    az: f64, el: f64,
+    w: f64, h: f64,
+    lmin: usize, lmax: usize,
+    rmin: usize, rmax: usize,
+    cmin: usize, cmax: usize,
+    zoom: f64,
+) -> Option<(usize, usize, usize)> {
+    let (sx, sy, sz) = (game.sx, game.sy, game.sz);
     let scx   = w / 2.0;
     let scy   = h / 2.0;
-    let scale = scale_for(s) * zoom;
-    let half  = (s as f64 - 1.0) / 2.0;
+    let scale = scale_for(sx, sy, sz) * zoom;
+    let hx    = (sx as f64 - 1.0) / 2.0;
+    let hy    = (sy as f64 - 1.0) / 2.0;
+    let hz    = (sz as f64 - 1.0) / 2.0;
     let r     = W_HALF * scale;
 
-    // Two buckets: prefer hidden/flagged (opaque) over revealed (transparent).
-    // Within each bucket take the frontmost (max depth = closest to camera).
     let mut best_solid:    Option<(f64, usize, usize, usize)> = None;
     let mut best_revealed: Option<(f64, usize, usize, usize)> = None;
-    for gz in 0..s { for gy in 0..s { for gx in 0..s {
-        if gz < layer_min || gz > layer_max { continue; }
-        if gy < row_min   || gy > row_max   { continue; }
-        if gx < col_min   || gx > col_max   { continue; }
-        let (wx, wy, wz) = cell_world(gx, gy, gz, half);
-        let (sx, sy, depth) = proj(wx, wy, wz, az, el);
-        let sx = scx + sx * scale;
-        let sy = scy + sy * scale;
-        if (mx - sx).abs() < r && (my - sy).abs() < r {
-            if game.grid[gz][gy][gx].state == CellState::Revealed {
-                if best_revealed.is_none() || depth > best_revealed.unwrap().0 {
-                    best_revealed = Some((depth, gx, gy, gz));
-                }
-            } else {
-                if best_solid.is_none() || depth > best_solid.unwrap().0 {
-                    best_solid = Some((depth, gx, gy, gz));
+
+    for gz in lmin..=lmax.min(sz.saturating_sub(1)) {
+        for gy in rmin..=rmax.min(sy.saturating_sub(1)) {
+            for gx in cmin..=cmax.min(sx.saturating_sub(1)) {
+                let (wx, wy, wz) = cell_world(gx, gy, gz, hx, hy, hz);
+                let (px, py, depth) = proj(wx, wy, wz, az, el);
+                let px = scx + px * scale;
+                let py = scy + py * scale;
+                if (mx - px).abs() < r && (my - py).abs() < r {
+                    if game.grid[gz][gy][gx].state == CellState::Revealed {
+                        if best_revealed.map_or(true, |(d, ..)| depth > d) {
+                            best_revealed = Some((depth, gx, gy, gz));
+                        }
+                    } else if best_solid.map_or(true, |(d, ..)| depth > d) {
+                        best_solid = Some((depth, gx, gy, gz));
+                    }
                 }
             }
         }
-    }}}
+    }
+
     best_solid.or(best_revealed).map(|(_, x, y, z)| (x, y, z))
 }
 
@@ -512,7 +575,7 @@ fn set_face(
 }
 
 // ---------------------------------------------------------------------------
-// Two-handle range slider (custom DrawingArea widget)
+// Two-handle range slider
 // ---------------------------------------------------------------------------
 
 fn make_range_slider(
@@ -522,18 +585,17 @@ fn make_range_slider(
     board_da: DrawingArea,
 ) -> DrawingArea {
     const PAD: f64 = 12.0;
-    const HR:  f64 = 7.0;   // handle radius
+    const HR:  f64 = 7.0;
 
     let da = DrawingArea::new();
     da.set_size_request(-1, 42);
     da.set_hexpand(true);
 
-    // Draw: track, active fill, tick marks, two handles.
     {
         let vmin = vmin.clone(); let vmax = vmax.clone();
         da.set_draw_func(move |widget, cr, _w, _h| {
-            let w = widget.width() as f64;
-            let h = widget.height() as f64;
+            let w   = widget.width() as f64;
+            let h   = widget.height() as f64;
             let ty  = h * 0.45;
             let len = w - 2.0 * PAD;
             let n   = (size - 1) as f64;
@@ -542,13 +604,11 @@ fn make_range_slider(
             let xmin = v2x(*vmin.borrow());
             let xmax = v2x(*vmax.borrow());
 
-            // Background track.
             cr.set_source_rgba(0.30, 0.30, 0.30, 1.0);
             cr.set_line_width(3.0);
             cr.move_to(PAD, ty); cr.line_to(w - PAD, ty);
             let _ = cr.stroke();
 
-            // Active range fill - use GTK accent colour.
             let accent = widget.style_context().lookup_color("accent_color")
                 .or_else(|| widget.style_context().lookup_color("theme_selected_bg_color"))
                 .unwrap_or(gtk4::gdk::RGBA::new(0.35, 0.55, 0.95, 1.0));
@@ -558,7 +618,6 @@ fn make_range_slider(
             cr.move_to(xmin, ty); cr.line_to(xmax, ty);
             let _ = cr.stroke();
 
-            // Tick marks + labels.
             for i in 0..size {
                 let x = v2x(i);
                 cr.set_source_rgba(0.55, 0.55, 0.55, 0.65);
@@ -578,7 +637,6 @@ fn make_range_slider(
                 pangocairo::functions::show_layout(cr, &layout);
             }
 
-            // Handles.
             for &x in &[xmin, xmax] {
                 cr.arc(x, ty, HR, 0.0, 2.0 * PI);
                 cr.set_source_rgba(0.82, 0.82, 0.82, 1.0);
@@ -591,8 +649,6 @@ fn make_range_slider(
         });
     }
 
-    // Drag: grab the closer handle on press, move it on update.
-    // active: None = idle, Some(false) = dragging min, Some(true) = dragging max.
     let active: Rc<RefCell<Option<bool>>> = Rc::new(RefCell::new(None));
     {
         let drag = GestureDrag::new();
@@ -602,13 +658,13 @@ fn make_range_slider(
             let active = active.clone();
             let da_c = da.clone();
             move |_, bx, _| {
-                let w = da_c.width() as f64;
+                let w   = da_c.width() as f64;
                 let len = w - 2.0 * PAD;
-                let n = (size - 1) as f64;
+                let n   = (size - 1) as f64;
                 let v2x = |v: usize| PAD + v as f64 / n * len;
                 let dx_min = (bx - v2x(*vmin.borrow())).abs();
                 let dx_max = (bx - v2x(*vmax.borrow())).abs();
-                *active.borrow_mut() = Some(dx_max < dx_min); // false=min, true=max
+                *active.borrow_mut() = Some(dx_max < dx_min);
             }
         });
 
@@ -619,24 +675,19 @@ fn make_range_slider(
             let board_da = board_da.clone();
             move |gesture, dx, _| {
                 let Some(is_max) = *active.borrow() else { return; };
-                let bx = gesture.start_point().map(|(x, _)| x).unwrap_or(0.0);
-                let w  = da_c.width() as f64;
+                let bx  = gesture.start_point().map(|(x, _)| x).unwrap_or(0.0);
+                let w   = da_c.width() as f64;
                 let len = (w - 2.0 * PAD).max(1.0);
                 let n   = (size - 1) as f64;
-                let v = ((bx + dx - PAD) / len * n).round().clamp(0.0, n) as usize;
-                if is_max {
-                    *vmax.borrow_mut() = v.max(*vmin.borrow());
-                } else {
-                    *vmin.borrow_mut() = v.min(*vmax.borrow());
-                }
+                let v   = ((bx + dx - PAD) / len * n).round().clamp(0.0, n) as usize;
+                if is_max { *vmax.borrow_mut() = v.max(*vmin.borrow()); }
+                else      { *vmin.borrow_mut() = v.min(*vmax.borrow()); }
                 da_c.queue_draw();
                 board_da.queue_draw();
             }
         });
 
-        drag.connect_drag_end({
-            move |_, _, _| { *active.borrow_mut() = None; }
-        });
+        drag.connect_drag_end({ move |_, _, _| { *active.borrow_mut() = None; } });
 
         da.add_controller(drag);
     }
@@ -649,34 +700,29 @@ fn make_range_slider(
 // ---------------------------------------------------------------------------
 
 pub fn create_board(ctx: &BoardContext) -> gtk4::Widget {
-    let size: usize = {
+    // Grid: x and z axes = game width (so top/bottom face = width²),
+    //       y axis = game height, mine count taken directly from 2-D game.
+    let (sx, sy, sz, gm) = {
         let g = ctx.game.borrow();
-        if g.width <= 9 { 4 } else if g.width <= 16 { 5 } else { 6 }
+        (g.width, g.height, g.width, g.mine_count)
     };
-    let mines = (size * size * size / 7) as u32;   // ≈ 14 %
+    let game3d = Rc::new(RefCell::new(Game3D::new(sx, sy, sz, gm as u32)));
 
-    let game3d = Rc::new(RefCell::new(Game3D::new(size, mines)));
-
-    // Rotation state.
     let az       = Rc::new(RefCell::new(INIT_AZ));
     let el       = Rc::new(RefCell::new(INIT_EL));
     let az_start = Rc::new(RefCell::new(INIT_AZ));
     let el_start = Rc::new(RefCell::new(INIT_EL));
-    // Press position (used to detect click vs. drag).
     let press_x  = Rc::new(RefCell::new(0.0f64));
     let press_y  = Rc::new(RefCell::new(0.0f64));
 
-    // Layer visibility state (Z-axis slice filter).
+    // Slice filters — each axis has its own independent range.
     let layer_min = Rc::new(RefCell::new(0usize));
-    let layer_max = Rc::new(RefCell::new(size - 1));
-    // Row visibility state (Y-axis slice filter).
-    let row_min = Rc::new(RefCell::new(0usize));
-    let row_max = Rc::new(RefCell::new(size - 1));
-    // Column visibility state (X-axis slice filter).
-    let col_min = Rc::new(RefCell::new(0usize));
-    let col_max = Rc::new(RefCell::new(size - 1));
+    let layer_max = Rc::new(RefCell::new(sz.saturating_sub(1)));
+    let row_min   = Rc::new(RefCell::new(0usize));
+    let row_max   = Rc::new(RefCell::new(sy.saturating_sub(1)));
+    let col_min   = Rc::new(RefCell::new(0usize));
+    let col_max   = Rc::new(RefCell::new(sx.saturating_sub(1)));
 
-    // Zoom state.
     let zoom = Rc::new(RefCell::new(1.0f64));
 
     let px = (DISPLAY + 20.0) as i32;
@@ -684,17 +730,12 @@ pub fn create_board(ctx: &BoardContext) -> gtk4::Widget {
     da.set_size_request(px, px);
     da.set_halign(gtk4::Align::Center);
 
-    // Draw function - captures az, el, layer range, row range, game3d.
     {
         let g    = game3d.clone();
-        let az   = az.clone();
-        let el   = el.clone();
-        let lmin = layer_min.clone();
-        let lmax = layer_max.clone();
-        let rmin = row_min.clone();
-        let rmax = row_max.clone();
-        let cmin = col_min.clone();
-        let cmax = col_max.clone();
+        let az   = az.clone(); let el = el.clone();
+        let lmin = layer_min.clone(); let lmax = layer_max.clone();
+        let rmin = row_min.clone();   let rmax = row_max.clone();
+        let cmin = col_min.clone();   let cmax = col_max.clone();
         let zm   = zoom.clone();
         da.set_draw_func(move |_, cr, w, h| {
             draw_board(cr, &g.borrow(), *az.borrow(), *el.borrow(), w as f64, h as f64,
@@ -713,22 +754,15 @@ pub fn create_board(ctx: &BoardContext) -> gtk4::Widget {
     let sr = ctx.timer_source.clone();
     let tl = ctx.timer_label.clone();
 
-    // ------------------------------------------------------------------
-    // Left button: GestureDrag handles BOTH drag-to-rotate AND click-reveal.
-    // A drag with total offset < CLICK_PX is treated as a click.
-    // ------------------------------------------------------------------
+    // Left button: GestureDrag handles drag-to-rotate AND click-to-reveal.
     {
         let da = da.clone();
         let az = az.clone();  let el = el.clone();
-        let az_start = az_start.clone();
-        let el_start = el_start.clone();
-        let press_x  = press_x.clone();
-        let press_y  = press_y.clone();
+        let az_start = az_start.clone(); let el_start = el_start.clone();
+        let press_x = press_x.clone(); let press_y = press_y.clone();
         let (ml, fb, st, sr, tl) = (ml.clone(), fb.clone(), st.clone(), sr.clone(), tl.clone());
-
         let drag = GestureDrag::new();
 
-        // Record start position and rotation.
         drag.connect_drag_begin({
             let az = az.clone(); let el = el.clone();
             let az_start = az_start.clone(); let el_start = el_start.clone();
@@ -743,7 +777,6 @@ pub fn create_board(ctx: &BoardContext) -> gtk4::Widget {
             }
         });
 
-        // Update rotation while dragging.
         drag.connect_drag_update({
             let az = az.clone(); let el = el.clone();
             let az_start = az_start.clone(); let el_start = el_start.clone();
@@ -756,7 +789,6 @@ pub fn create_board(ctx: &BoardContext) -> gtk4::Widget {
             }
         });
 
-        // On release: if little movement, treat as a click.
         drag.connect_drag_end({
             let g    = game3d.clone();
             let da   = da.clone();
@@ -768,9 +800,7 @@ pub fn create_board(ctx: &BoardContext) -> gtk4::Widget {
             let zm   = zoom.clone();
             let (ml, fb, st, sr, tl) = (ml.clone(), fb.clone(), st.clone(), sr.clone(), tl.clone());
             move |_, dx, dy| {
-                let dist = (dx * dx + dy * dy).sqrt();
-                if dist >= CLICK_PX { return; }  // was a drag, not a click
-
+                if (dx * dx + dy * dy).sqrt() >= CLICK_PX { return; }
                 if !matches!(g.borrow().state, GameState::Ready | GameState::Playing) { return; }
                 let mx = *press_x.borrow() + dx;
                 let my = *press_y.borrow() + dy;
@@ -778,10 +808,10 @@ pub fn create_board(ctx: &BoardContext) -> gtk4::Widget {
                 let (lmn, lmx) = (*lmin.borrow(), *lmax.borrow());
                 let (rmn, rmx) = (*rmin.borrow(), *rmax.borrow());
                 let (cmn, cmx) = (*cmin.borrow(), *cmax.borrow());
-
-                let Some((x, y, z)) = hit_test_3d(mx, my, &g.borrow(), az_v, el_v,
-                                                    da.width() as f64, da.height() as f64,
-                                                    lmn, lmx, rmn, rmx, cmn, cmx, *zm.borrow())
+                let Some((x, y, z)) = hit_test_3d(
+                    mx, my, &g.borrow(), az_v, el_v,
+                    da.width() as f64, da.height() as f64,
+                    lmn, lmx, rmn, rmx, cmn, cmx, *zm.borrow())
                 else { return };
 
                 let was_ready   = g.borrow().state == GameState::Ready;
@@ -804,14 +834,11 @@ pub fn create_board(ctx: &BoardContext) -> gtk4::Widget {
         da.add_controller(drag);
     }
 
-    // ------------------------------------------------------------------
     // Right click: flag.
-    // ------------------------------------------------------------------
     {
         let g    = game3d.clone();
         let da_c = da.clone();
-        let az   = az.clone();
-        let el   = el.clone();
+        let az   = az.clone(); let el = el.clone();
         let lmin = layer_min.clone(); let lmax = layer_max.clone();
         let rmin = row_min.clone();   let rmax = row_max.clone();
         let cmin = col_min.clone();   let cmax = col_max.clone();
@@ -826,9 +853,10 @@ pub fn create_board(ctx: &BoardContext) -> gtk4::Widget {
             let (lmn, lmx) = (*lmin.borrow(), *lmax.borrow());
             let (rmn, rmx) = (*rmin.borrow(), *rmax.borrow());
             let (cmn, cmx) = (*cmin.borrow(), *cmax.borrow());
-            let Some((x, y, z)) = hit_test_3d(mx, my, &g.borrow(), az_v, el_v,
-                                               da_c.width() as f64, da_c.height() as f64,
-                                               lmn, lmx, rmn, rmx, cmn, cmx, *zm.borrow())
+            let Some((x, y, z)) = hit_test_3d(
+                mx, my, &g.borrow(), az_v, el_v,
+                da_c.width() as f64, da_c.height() as f64,
+                lmn, lmx, rmn, rmx, cmn, cmx, *zm.borrow())
             else { return };
             g.borrow_mut().toggle_flag(x, y, z);
             da_c.queue_draw();
@@ -839,14 +867,11 @@ pub fn create_board(ctx: &BoardContext) -> gtk4::Widget {
         da.add_controller(right);
     }
 
-    // ------------------------------------------------------------------
     // Middle click: chord.
-    // ------------------------------------------------------------------
     {
         let g    = game3d.clone();
         let da_c = da.clone();
-        let az   = az.clone();
-        let el   = el.clone();
+        let az   = az.clone(); let el = el.clone();
         let lmin = layer_min.clone(); let lmax = layer_max.clone();
         let rmin = row_min.clone();   let rmax = row_max.clone();
         let cmin = col_min.clone();   let cmax = col_max.clone();
@@ -861,9 +886,10 @@ pub fn create_board(ctx: &BoardContext) -> gtk4::Widget {
             let (lmn, lmx) = (*lmin.borrow(), *lmax.borrow());
             let (rmn, rmx) = (*rmin.borrow(), *rmax.borrow());
             let (cmn, cmx) = (*cmin.borrow(), *cmax.borrow());
-            let Some((x, y, z)) = hit_test_3d(mx, my, &g.borrow(), az_v, el_v,
-                                               da_c.width() as f64, da_c.height() as f64,
-                                               lmn, lmx, rmn, rmx, cmn, cmx, *zm.borrow())
+            let Some((x, y, z)) = hit_test_3d(
+                mx, my, &g.borrow(), az_v, el_v,
+                da_c.width() as f64, da_c.height() as f64,
+                lmn, lmx, rmn, rmx, cmn, cmx, *zm.borrow())
             else { return };
             if !g.borrow_mut().chord(x, y, z) { return; }
             da_c.queue_draw();
@@ -874,29 +900,24 @@ pub fn create_board(ctx: &BoardContext) -> gtk4::Widget {
         da.add_controller(middle);
     }
 
-    // ------------------------------------------------------------------
     // Scroll to zoom.
-    // ------------------------------------------------------------------
     {
         let zm   = zoom.clone();
         let da_c = da.clone();
         let scroll = EventControllerScroll::new(gtk4::EventControllerScrollFlags::VERTICAL);
         scroll.connect_scroll(move |_, _dx, dy| {
             let factor = if dy < 0.0 { 1.1 } else { 1.0 / 1.1 };
-            let new_zoom = (*zm.borrow() * factor).clamp(0.2, 5.0);
-            *zm.borrow_mut() = new_zoom;
+            *zm.borrow_mut() = (*zm.borrow() * factor).clamp(0.2, 5.0);
             da_c.queue_draw();
             glib::Propagation::Stop
         });
         da.add_controller(scroll);
     }
 
-    // ------------------------------------------------------------------
-    // Range sliders.
-    // ------------------------------------------------------------------
-    let layer_slider = make_range_slider(size, layer_min.clone(), layer_max.clone(), da.clone());
-    let row_slider   = make_range_slider(size, row_min.clone(),   row_max.clone(),   da.clone());
-    let col_slider   = make_range_slider(size, col_min.clone(),   col_max.clone(),   da.clone());
+    // Range sliders — each axis uses its own size.
+    let layer_slider = make_range_slider(sz, layer_min.clone(), layer_max.clone(), da.clone());
+    let row_slider   = make_range_slider(sy, row_min.clone(),   row_max.clone(),   da.clone());
+    let col_slider   = make_range_slider(sx, col_min.clone(),   col_max.clone(),   da.clone());
 
     let make_row = |lbl: &str, widget: &DrawingArea| -> gtk4::Box {
         let row = gtk4::Box::new(gtk4::Orientation::Horizontal, 4);
@@ -916,7 +937,6 @@ pub fn create_board(ctx: &BoardContext) -> gtk4::Widget {
 }
 
 pub fn update_board(_game: &Rc<RefCell<crate::game::Game>>, board: &gtk4::Widget) {
-    // Board is now a Box containing the DrawingArea as first child.
     if let Some(bx) = board.downcast_ref::<gtk4::Box>() {
         if let Some(da) = bx.first_child().and_then(|w| w.downcast::<DrawingArea>().ok()) {
             da.queue_draw();

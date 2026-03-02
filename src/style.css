@@ -27,6 +27,12 @@
     background-image: none;
 }
 
+/* Kudzu variant - vine-covered hidden cells */
+.cell-kudzu {
+    background-color: mix(@theme_bg_color, #22aa44, 0.30);
+    background-image: none;
+}
+
 /* Chain variant - unrevealed tile reachable from the revealed frontier */
 .cell-reachable {
     background-color: mix(@theme_bg_color, #4488ff, 0.15);

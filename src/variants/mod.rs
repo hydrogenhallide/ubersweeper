@@ -4,6 +4,7 @@ pub mod encrypted;
 pub mod minelayer;
 pub mod blindsweeper;
 pub mod infection;
+pub mod kudzu;
 pub mod nested;
 pub mod chain;
 pub mod offset;
@@ -17,6 +18,7 @@ pub mod panic;
 pub mod relative;
 pub mod rgb;
 pub mod rotation;
+pub mod crosswired;
 pub mod subtract;
 pub mod threed;
 
@@ -38,6 +40,7 @@ pub enum Variant {
     Classic,
     Encrypted,
     Infection,
+    Kudzu,
     Nested,
     Drift,
     Offset,
@@ -51,6 +54,7 @@ pub enum Variant {
     Relative,
     Rgb,
     Rotation,
+    CrossWired,
     Subtract,
     Threed,
 }
@@ -76,6 +80,7 @@ pub fn create_board(variant: Variant, ctx: &BoardContext) -> gtk4::Widget {
         Variant::Crosswalk  => crosswalk::create_board(ctx),
         Variant::Encrypted  => encrypted::create_board(ctx),
         Variant::Infection  => infection::create_board(ctx),
+        Variant::Kudzu      => kudzu::create_board(ctx),
         Variant::Nested     => nested::create_board(ctx),
         Variant::Drift   => drift::create_board(ctx),
         Variant::Offset => offset::create_board(ctx),
@@ -89,8 +94,9 @@ pub fn create_board(variant: Variant, ctx: &BoardContext) -> gtk4::Widget {
         Variant::Relative => relative::create_board(ctx),
         Variant::Rgb      => rgb::create_board(ctx),
         Variant::Rotation => rotation::create_board(ctx),
-        Variant::Subtract => subtract::create_board(ctx),
-        Variant::Threed   => threed::create_board(ctx),
+        Variant::CrossWired  => crosswired::create_board(ctx),
+        Variant::Subtract    => subtract::create_board(ctx),
+        Variant::Threed      => threed::create_board(ctx),
     }
 }
 
@@ -106,6 +112,7 @@ pub fn update_board(variant: Variant, game: &Rc<RefCell<Game>>, board: &gtk4::Wi
         Variant::Crosswalk  => crosswalk::update_board(game, board),
         Variant::Encrypted  => encrypted::update_board(game, board),
         Variant::Infection  => infection::update_board(game, board),
+        Variant::Kudzu      => kudzu::update_board(game, board),
         Variant::Nested     => nested::update_board(game, board),
         Variant::Drift   => drift::update_board(game, board),
         Variant::Offset => offset::update_board(game, board),
@@ -119,8 +126,9 @@ pub fn update_board(variant: Variant, game: &Rc<RefCell<Game>>, board: &gtk4::Wi
         Variant::Relative => relative::update_board(game, board),
         Variant::Rgb      => rgb::update_board(game, board),
         Variant::Rotation => rotation::update_board(game, board),
-        Variant::Subtract => subtract::update_board(game, board),
-        Variant::Threed   => threed::update_board(game, board),
+        Variant::CrossWired  => crosswired::update_board(game, board),
+        Variant::Subtract    => subtract::update_board(game, board),
+        Variant::Threed      => threed::update_board(game, board),
     }
 }
 

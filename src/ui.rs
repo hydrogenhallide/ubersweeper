@@ -124,10 +124,12 @@ impl Ubersweeper {
         hard_tier.append(Some("Marathon"),       Some("app.variant-marathon"));
 
         let expert_tier = gio::Menu::new();
+        expert_tier.append(Some("Kudzu"),         Some("app.variant-kudzu"));
         expert_tier.append(Some("Offset"),       Some("app.variant-offset"));
         expert_tier.append(Some("Infection"),    Some("app.variant-infection"));
         expert_tier.append(Some("Relative"),     Some("app.variant-relative"));
         expert_tier.append(Some("Encrypted"),    Some("app.variant-encrypted"));
+        expert_tier.append(Some("Cross-wired"),  Some("app.variant-crosswired"));
 
         let master_tier = gio::Menu::new();
         master_tier.append(Some("Average"),      Some("app.variant-average"));
@@ -229,6 +231,10 @@ impl Ubersweeper {
             *v.borrow_mut() = Variant::Chain;
             Self::reset_game_static(g, d, v, bc, bw, mine, timer, face, start, src);
         });
+        add_action!("variant-kudzu", |g, d, v: &Rc<RefCell<Variant>>, bc, bw, mine, timer, face, start, src| {
+            *v.borrow_mut() = Variant::Kudzu;
+            Self::reset_game_static(g, d, v, bc, bw, mine, timer, face, start, src);
+        });
         add_action!("variant-offset", |g, d, v: &Rc<RefCell<Variant>>, bc, bw, mine, timer, face, start, src| {
             *v.borrow_mut() = Variant::Offset;
             Self::reset_game_static(g, d, v, bc, bw, mine, timer, face, start, src);
@@ -303,6 +309,10 @@ impl Ubersweeper {
         });
         add_action!("variant-crosswalk", |g, d, v: &Rc<RefCell<Variant>>, bc, bw, mine, timer, face, start, src| {
             *v.borrow_mut() = Variant::Crosswalk;
+            Self::reset_game_static(g, d, v, bc, bw, mine, timer, face, start, src);
+        });
+        add_action!("variant-crosswired", |g, d, v: &Rc<RefCell<Variant>>, bc, bw, mine, timer, face, start, src| {
+            *v.borrow_mut() = Variant::CrossWired;
             Self::reset_game_static(g, d, v, bc, bw, mine, timer, face, start, src);
         });
 
@@ -582,11 +592,12 @@ fn show_help_window(parent: &ApplicationWindow) {
     entry(&content, "Marathon",       "Every N moves the bottom row is erased, everything shifts down, and a new row appears at the top. Leave anything wrong when the shift happens and you die.");
 
     tier(&content, "Expert");
+    entry(&content, "Kudzu",          "Vine tiles (🌱) spread across the board one cell per move, hiding mines beneath them. Uncovering a tile that is on or adjacent to kudzu clears vines from the four orthogonal neighbours too.");
     entry(&content, "Offset",         "Each cell's number counts mines in a shifted 3×3 region, shown by a direction arrow - not the standard 8 neighbours.");
     entry(&content, "Infection",      "Revealing a numbered cell has a 20% chance to spawn a new mine on a random hidden neighbour, updating all nearby counts.");
     entry(&content, "Relative",       "Numbers show the difference from the cell directly above, not an absolute count. The top row shows absolute values.");
     entry(&content, "Encrypted",      "Revealed cells hide their value. Solve a maths equation to earn one peek at a cell's true number. Two failed chords lock a 3×3 area - decrypt each cell individually to unlock it.");
-
+    entry(&content, "Cross-wired",    "The numbers on one board tell you the number of neighbouring mines on the same cell on the other.");
     tier(&content, "Master");
     entry(&content, "Average",        "Numbers show the mean mine count across all 8 neighbours - not the actual adjacency value.");
     entry(&content, "RGB",            "Three independent mine layers: Red, Green, and Blue. Hit any mine and you die. Numbers show per-channel counts; flagging one colour reveals the other two.");
