@@ -336,6 +336,26 @@ impl Game {
                 if nx >= 0 && nx < self.width as isize && ny >= 0 && ny < self.height as isize {
                     let nx = nx as usize;
                     let ny = ny as usize;
+                    let cell = &self.grid[ny][nx];
+                    // In multi-mines, flagged cells where flag level != mine count are
+                    // treated as unprotected: force-reveal them so wrong guesses kill.
+                    let wrongly_flagged = self.variant == Variant::MultiMines
+                        && match cell.state {
+                            CellState::Flagged  => cell.mines != 1,
+                            CellState::Flagged2 => cell.mines != 2,
+                            CellState::Flagged3 => cell.mines != 3,
+                            _ => false,
+                        };
+                    if wrongly_flagged {
+                        let flag_weight: usize = match self.grid[ny][nx].state {
+                            CellState::Flagged  => 1,
+                            CellState::Flagged2 => 2,
+                            CellState::Flagged3 => 3,
+                            _ => 0,
+                        };
+                        self.flags_placed = self.flags_placed.saturating_sub(flag_weight);
+                        self.grid[ny][nx].state = CellState::Hidden;
+                    }
                     if self.grid[ny][nx].state == CellState::Hidden {
                         if self.reveal(nx, ny) { revealed = true; }
                     }
@@ -380,7 +400,7 @@ impl Game {
         }
     }
 
-    fn check_win(&mut self) {
+    pub fn check_win(&mut self) {
         for y in 0..self.height {
             for x in 0..self.width {
                 let cell = &self.grid[y][x];

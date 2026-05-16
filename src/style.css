@@ -143,6 +143,16 @@
 .cell-neg-7 label { color: @theme_fg_color; filter: invert(1); }
 .cell-neg-8 label { color: #808080; filter: invert(1); }
 
+/* ── PvAI variant ────────────────────────────────────────────────────────── */
+.cell-revealed-player {
+    background-color: mix(@theme_bg_color, #cc4444, 0.35);
+    background-image: none;
+}
+.cell-revealed-ai {
+    background-color: mix(@theme_bg_color, #4466cc, 0.35);
+    background-image: none;
+}
+
 /* ── About window ────────────────────────────────────────────────────────── */
 .about-name    { font-size: 22px; font-weight: bold; }
 .about-version { font-size: 13px; opacity: 0.5; }

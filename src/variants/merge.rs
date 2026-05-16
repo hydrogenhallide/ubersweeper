@@ -181,13 +181,6 @@ impl MergeGame {
         let flags: usize = nbrs.iter().filter(|&&ng| self.groups[ng].state == GroupState::Flagged).count();
         if flags != self.groups[gid].adjacent { return false; }
 
-        // Every flagged neighbour must actually be a mine group.
-        for &ng in &nbrs {
-            if self.groups[ng].state == GroupState::Flagged && !self.groups[ng].mine {
-                return false;
-            }
-        }
-
         let mut changed = false;
         for ng in nbrs {
             if self.groups[ng].state == GroupState::Hidden {

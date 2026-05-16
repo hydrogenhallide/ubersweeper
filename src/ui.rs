@@ -122,6 +122,7 @@ impl Ubersweeper {
         hard_tier.append(Some("Panic"),          Some("app.variant-panic"));
         hard_tier.append(Some("Merge"),          Some("app.variant-merge"));
         hard_tier.append(Some("Marathon"),       Some("app.variant-marathon"));
+        hard_tier.append(Some("Voronoi"),        Some("app.variant-voronoi"));
 
         let expert_tier = gio::Menu::new();
         expert_tier.append(Some("Kudzu"),         Some("app.variant-kudzu"));
@@ -130,8 +131,12 @@ impl Ubersweeper {
         expert_tier.append(Some("Relative"),     Some("app.variant-relative"));
         expert_tier.append(Some("Encrypted"),    Some("app.variant-encrypted"));
         expert_tier.append(Some("Cross-wired"),  Some("app.variant-crosswired"));
+        expert_tier.append(Some("Ico"),          Some("app.variant-ico"));
+        expert_tier.append(Some("Hyperbolic"),   Some("app.variant-hyperbolic"));
 
         let master_tier = gio::Menu::new();
+        master_tier.append(Some("PvAI"),         Some("app.variant-pvai"));
+        master_tier.append(Some("Infinite"),     Some("app.variant-infinite"));
         master_tier.append(Some("Average"),      Some("app.variant-average"));
         master_tier.append(Some("RGB"),          Some("app.variant-rgb"));
         master_tier.append(Some("3D"),           Some("app.variant-threed"));
@@ -192,16 +197,19 @@ impl Ubersweeper {
             }};
         }
 
-        add_action!("beginner", |g, d: &Rc<RefCell<Difficulty>>, v, bc, bw, mine, timer, face, start, src| {
+        add_action!("beginner", |g, d: &Rc<RefCell<Difficulty>>, v: &Rc<RefCell<Variant>>, bc, bw, mine, timer, face, start, src| {
             *d.borrow_mut() = Difficulty::Beginner;
+            if *v.borrow() == Variant::Rgb { crate::variants::rgb::set_custom_n_colours(3); }
             Self::reset_game_static(g, d, v, bc, bw, mine, timer, face, start, src);
         });
-        add_action!("intermediate", |g, d: &Rc<RefCell<Difficulty>>, v, bc, bw, mine, timer, face, start, src| {
+        add_action!("intermediate", |g, d: &Rc<RefCell<Difficulty>>, v: &Rc<RefCell<Variant>>, bc, bw, mine, timer, face, start, src| {
             *d.borrow_mut() = Difficulty::Intermediate;
+            if *v.borrow() == Variant::Rgb { crate::variants::rgb::set_custom_n_colours(3); }
             Self::reset_game_static(g, d, v, bc, bw, mine, timer, face, start, src);
         });
-        add_action!("expert", |g, d: &Rc<RefCell<Difficulty>>, v, bc, bw, mine, timer, face, start, src| {
+        add_action!("expert", |g, d: &Rc<RefCell<Difficulty>>, v: &Rc<RefCell<Variant>>, bc, bw, mine, timer, face, start, src| {
             *d.borrow_mut() = Difficulty::Expert;
+            if *v.borrow() == Variant::Rgb { crate::variants::rgb::set_custom_n_colours(3); }
             Self::reset_game_static(g, d, v, bc, bw, mine, timer, face, start, src);
         });
 
@@ -315,6 +323,26 @@ impl Ubersweeper {
             *v.borrow_mut() = Variant::CrossWired;
             Self::reset_game_static(g, d, v, bc, bw, mine, timer, face, start, src);
         });
+        add_action!("variant-ico", |g, d, v: &Rc<RefCell<Variant>>, bc, bw, mine, timer, face, start, src| {
+            *v.borrow_mut() = Variant::Ico;
+            Self::reset_game_static(g, d, v, bc, bw, mine, timer, face, start, src);
+        });
+        add_action!("variant-hyperbolic", |g, d, v: &Rc<RefCell<Variant>>, bc, bw, mine, timer, face, start, src| {
+            *v.borrow_mut() = Variant::Hyperbolic;
+            Self::reset_game_static(g, d, v, bc, bw, mine, timer, face, start, src);
+        });
+        add_action!("variant-infinite", |g, d, v: &Rc<RefCell<Variant>>, bc, bw, mine, timer, face, start, src| {
+            *v.borrow_mut() = Variant::Infinite;
+            Self::reset_game_static(g, d, v, bc, bw, mine, timer, face, start, src);
+        });
+        add_action!("variant-voronoi", |g, d, v: &Rc<RefCell<Variant>>, bc, bw, mine, timer, face, start, src| {
+            *v.borrow_mut() = Variant::Voronoi;
+            Self::reset_game_static(g, d, v, bc, bw, mine, timer, face, start, src);
+        });
+        add_action!("variant-pvai", |g, d, v: &Rc<RefCell<Variant>>, bc, bw, mine, timer, face, start, src| {
+            *v.borrow_mut() = Variant::PvAi;
+            Self::reset_game_static(g, d, v, bc, bw, mine, timer, face, start, src);
+        });
 
         {
             let action = gio::SimpleAction::new("help", None);
@@ -362,16 +390,53 @@ impl Ubersweeper {
         grid.set_margin_start(10);
         grid.set_margin_end(10);
 
-        let width_entry = Entry::new(); width_entry.set_text("9");
-        let height_entry = Entry::new(); height_entry.set_text("9");
-        let mines_entry = Entry::new(); mines_entry.set_text("10");
+        let is_ico = *variant.borrow() == Variant::Ico;
+        let is_hyp = *variant.borrow() == Variant::Hyperbolic;
+        let is_inf = *variant.borrow() == Variant::Infinite;
+        let is_rgb = *variant.borrow() == Variant::Rgb;
 
-        grid.attach(&Label::new(Some("Width (9-50):")),  0, 0, 1, 1);
-        grid.attach(&width_entry,                         1, 0, 1, 1);
-        grid.attach(&Label::new(Some("Height (9-50):")), 0, 1, 1, 1);
-        grid.attach(&height_entry,                        1, 1, 1, 1);
-        grid.attach(&Label::new(Some("Mines (1-999):")), 0, 2, 1, 1);
-        grid.attach(&mines_entry,                         1, 2, 1, 1);
+        let subs_entry    = Entry::new(); subs_entry.set_text("2");
+        let rings_entry   = Entry::new(); rings_entry.set_text("3");
+        let density_entry = Entry::new(); density_entry.set_text("5");
+        let colours_entry = Entry::new(); colours_entry.set_text("3");
+        let width_entry   = Entry::new(); width_entry.set_text("9");
+        let height_entry  = Entry::new(); height_entry.set_text("9");
+        let mines_entry   = Entry::new(); mines_entry.set_text("10");
+
+        if is_inf {
+            dialog.set_title(Some("Infinite Options"));
+            grid.attach(&Label::new(Some("Safe tiles per mine (1-20):")), 0, 0, 1, 1);
+            grid.attach(&density_entry,                                    1, 0, 1, 1);
+        } else if is_ico {
+            dialog.set_title(Some("Ico Options"));
+            grid.attach(&Label::new(Some("Subdivisions (0-9):")), 0, 0, 1, 1);
+            grid.attach(&subs_entry,                               1, 0, 1, 1);
+            grid.attach(&Label::new(Some("Mines:")),               0, 1, 1, 1);
+            grid.attach(&mines_entry,                              1, 1, 1, 1);
+        } else if is_hyp {
+            dialog.set_title(Some("Hyperbolic Options"));
+            grid.attach(&Label::new(Some("Rings (1-6):")), 0, 0, 1, 1);
+            grid.attach(&rings_entry,                       1, 0, 1, 1);
+            grid.attach(&Label::new(Some("Mines:")),        0, 1, 1, 1);
+            grid.attach(&mines_entry,                       1, 1, 1, 1);
+        } else if is_rgb {
+            dialog.set_title(Some("RGB Options"));
+            grid.attach(&Label::new(Some("Colours (2-20):")), 0, 0, 1, 1);
+            grid.attach(&colours_entry,                        1, 0, 1, 1);
+            grid.attach(&Label::new(Some("Width (1-100):")),   0, 1, 1, 1);
+            grid.attach(&width_entry,                          1, 1, 1, 1);
+            grid.attach(&Label::new(Some("Height (1-100):")),  0, 2, 1, 1);
+            grid.attach(&height_entry,                         1, 2, 1, 1);
+            grid.attach(&Label::new(Some("Mines (1-999):")),  0, 3, 1, 1);
+            grid.attach(&mines_entry,                          1, 3, 1, 1);
+        } else {
+            grid.attach(&Label::new(Some("Width (1-100):")),  0, 0, 1, 1);
+            grid.attach(&width_entry,                         1, 0, 1, 1);
+            grid.attach(&Label::new(Some("Height (1-100):")), 0, 1, 1, 1);
+            grid.attach(&height_entry,                        1, 1, 1, 1);
+            grid.attach(&Label::new(Some("Mines (1-999):")), 0, 2, 1, 1);
+            grid.attach(&mines_entry,                         1, 2, 1, 1);
+        }
         content.append(&grid);
 
         let game_c = game.clone(); let difficulty_c = difficulty.clone();
@@ -382,11 +447,35 @@ impl Ubersweeper {
 
         dialog.connect_response(move |dialog, response| {
             if response == ResponseType::Ok {
-                let width: usize = width_entry.text().parse().unwrap_or(9).clamp(9, 50);
-                let height: usize = height_entry.text().parse().unwrap_or(9).clamp(9, 50);
-                let max_mines = width * height - 9;
-                let mines: usize = mines_entry.text().parse().unwrap_or(10).clamp(1, max_mines);
-                *difficulty_c.borrow_mut() = Difficulty::Custom(width, height, mines);
+                if is_inf {
+                    let density: usize = density_entry.text().parse().unwrap_or(5).clamp(1, 20);
+                    // height=9997 sentinel; width encodes safe_per_mine
+                    *difficulty_c.borrow_mut() = Difficulty::Custom(density, 9997, 0);
+                } else if is_ico {
+                    let subs: usize = subs_entry.text().parse().unwrap_or(2).clamp(0, 9);
+                    let mines: usize = mines_entry.text().parse().unwrap_or(10);
+                    // height=9999 sentinel: ensures Game::new doesn't clamp mine_count.
+                    *difficulty_c.borrow_mut() = Difficulty::Custom(subs, 9999, mines);
+                } else if is_hyp {
+                    let rings: usize = rings_entry.text().parse().unwrap_or(3).clamp(1, 6);
+                    let mines: usize = mines_entry.text().parse().unwrap_or(10);
+                    // height=9998 sentinel for hyperbolic; rings stored in width field.
+                    *difficulty_c.borrow_mut() = Difficulty::Custom(rings, 9998, mines);
+                } else if is_rgb {
+                    let colours: usize = colours_entry.text().parse().unwrap_or(3).clamp(2, 20);
+                    let width: usize = width_entry.text().parse().unwrap_or(9).clamp(1, 100);
+                    let height: usize = height_entry.text().parse().unwrap_or(9).clamp(1, 100);
+                    let max_mines = (width * height).saturating_sub(1);
+                    let mines: usize = mines_entry.text().parse().unwrap_or(10).clamp(1, max_mines);
+                    crate::variants::rgb::set_custom_n_colours(colours);
+                    *difficulty_c.borrow_mut() = Difficulty::Custom(width, height, mines);
+                } else {
+                    let width: usize = width_entry.text().parse().unwrap_or(9).clamp(1, 100);
+                    let height: usize = height_entry.text().parse().unwrap_or(9).clamp(1, 100);
+                    let max_mines = (width * height).saturating_sub(1);
+                    let mines: usize = mines_entry.text().parse().unwrap_or(10).clamp(1, max_mines);
+                    *difficulty_c.borrow_mut() = Difficulty::Custom(width, height, mines);
+                }
                 Self::reset_game_static(
                     &game_c, &difficulty_c, &variant_c, &bc, &bw,
                     &mine_c, &timer_c, &face_c, &start_c, &source_c,
@@ -590,6 +679,7 @@ fn show_help_window(parent: &ApplicationWindow) {
     entry(&content, "Panic",          "A 5-second countdown resets on every action. When time runs out, a random cell adjacent to your revealed area is clicked for you.");
     entry(&content, "Merge",          "Cells are randomly resized to 1×2, 2×1, or 2×2, giving them more neighbours.");
     entry(&content, "Marathon",       "Every N moves the bottom row is erased, everything shifts down, and a new row appears at the top. Leave anything wrong when the shift happens and you die.");
+    entry(&content, "Voronoi",        "The grid is replaced by a Voronoi diagram of random points. Cells are irregular polygons with varying numbers of neighbours — a '3' next to a cell with 8 neighbours is very different from a '3' next to one with 4.");
 
     tier(&content, "Expert");
     entry(&content, "Kudzu",          "Vine tiles (🌱) spread across the board one cell per move, hiding mines beneath them. Uncovering a tile that is on or adjacent to kudzu clears vines from the four orthogonal neighbours too.");
@@ -598,7 +688,11 @@ fn show_help_window(parent: &ApplicationWindow) {
     entry(&content, "Relative",       "Numbers show the difference from the cell directly above, not an absolute count. The top row shows absolute values.");
     entry(&content, "Encrypted",      "Revealed cells hide their value. Solve a maths equation to earn one peek at a cell's true number. Two failed chords lock a 3×3 area - decrypt each cell individually to unlock it.");
     entry(&content, "Cross-wired",    "The numbers on one board tell you the number of neighbouring mines on the same cell on the other.");
+    entry(&content, "Ico",           "The board is projected onto an icosahedron. Cells wrap around a sphere, giving every cell exactly the same neighbourhood size.");
+    entry(&content, "Hyperbolic",    "The board lives in hyperbolic space, tiled with squares. Cells near the boundary of the Poincaré disk have vastly more neighbours than cells at the centre. Drag to pan.");
     tier(&content, "Master");
+    entry(&content, "PvAI",            "Play against an AI. You start in one corner, the AI starts in the opposite. The AI uses constraint-solving to play fair — it never cheats, but its skill scales with board difficulty. Reveal more safe tiles than the AI to win. Your tiles are red-tinted, the AI's are blue-tinted.");
+    entry(&content, "Infinite",       "An infinite scrolling board generated from a seed — the same mine is always in the same place. No win condition: flag as many mines as you can. Correct flags score +1, wrong flags score -1. The mine counter shows your score. Drag to pan.");
     entry(&content, "Average",        "Numbers show the mean mine count across all 8 neighbours - not the actual adjacency value.");
     entry(&content, "RGB",            "Three independent mine layers: Red, Green, and Blue. Hit any mine and you die. Numbers show per-channel counts; flagging one colour reveals the other two.");
     entry(&content, "3D",             "A full three-dimensional grid where each cell has up to 26 neighbours. Drag to rotate the view, scroll to zoom.");

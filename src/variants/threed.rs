@@ -228,12 +228,13 @@ fn num_color(n: u8) -> (f64, f64, f64) {
 
 fn draw_label(cr: &cairo::Context, cx: f64, cy: f64, text: &str,
               r: f64, g: f64, b: f64, a: f64, font_px: f64) {
+    if font_px < 2.0 { return; }
     let layout = pangocairo::functions::create_layout(cr);
     layout.set_text(text);
     let mut fd = pango::FontDescription::new();
     fd.set_family("Sans");
     fd.set_weight(pango::Weight::Bold);
-    fd.set_size((font_px * 0.72 * pango::SCALE as f64) as i32);
+    fd.set_size(((font_px * 0.72 * pango::SCALE as f64) as i32).max(1));
     layout.set_font_description(Some(&fd));
     let (lw, lh) = layout.pixel_size();
     cr.move_to(cx - lw as f64 / 2.0, cy - lh as f64 / 2.0);
@@ -255,6 +256,7 @@ fn draw_cube(
     scx: f64, scy: f64,
     scale: f64,
     bevel_n: usize,
+    tc: &super::ThemeColors,
 ) {
     let h  = W_HALF;
     let b  = BEVEL;
@@ -273,16 +275,21 @@ fn draw_cube(
         CellState::Revealed if !cell.is_mine => 0.18,
         _                                    => 1.0,
     };
-    let (br, bg, bb): (f64, f64, f64) = match cell.state {
-        CellState::Revealed if cell.is_mine => (0.65, 0.18, 0.18),
-        CellState::Revealed                 => (0.14, 0.14, 0.14),
-        _                                   => (0.24, 0.24, 0.24),
+    let [br, bcg, bb] = match cell.state {
+        CellState::Revealed if cell.is_mine => [0.65_f64, 0.18, 0.18],
+        CellState::Revealed                 => super::mix3(tc.bg, tc.fg, 0.10),
+        _                                   => super::mix3(tc.bg, tc.fg, 0.25),
     };
     let lit = |_nx: f64, ny: f64, nz: f64| -> f64 {
         (0.65 + 0.65 * ny + 0.35 * nz).max(0.05)
     };
+    let [wr, wg, wb] = super::mix3(tc.bg, tc.fg, 0.50);
     let set_col = |cr: &cairo::Context, l: f64| {
-        cr.set_source_rgba((br*l).min(1.0), (bg*l).min(1.0), (bb*l).min(1.0), alpha);
+        cr.set_source_rgba((br*l).min(1.0), (bcg*l).min(1.0), (bb*l).min(1.0), alpha);
+    };
+    let outline = |cr: &cairo::Context, q| {
+        cr.set_source_rgba(wr, wg, wb, alpha * 0.4);
+        outline_quad(cr, q);
     };
 
     // ── 6 flat faces ──────────────────────────────────────────────────────────
@@ -290,19 +297,19 @@ fn draw_cube(
         if ez * vd.2 < 0.02 { continue; }
         let q = [p(-fh,-fh,ez*h), p(fh,-fh,ez*h), p(fh,fh,ez*h), p(-fh,fh,ez*h)];
         set_col(cr, lit(0.0, 0.0, ez)); fill_quad(cr, q);
-        cr.set_source_rgba(0.5, 0.5, 0.5, alpha * 0.4); outline_quad(cr, q);
+        outline(cr, q);
     }
     for ey in [1.0_f64, -1.0] {
         if ey * vd.1 < 0.02 { continue; }
         let q = [p(-fh,ey*h,-fh), p(fh,ey*h,-fh), p(fh,ey*h,fh), p(-fh,ey*h,fh)];
         set_col(cr, lit(0.0, ey, 0.0)); fill_quad(cr, q);
-        cr.set_source_rgba(0.5, 0.5, 0.5, alpha * 0.4); outline_quad(cr, q);
+        outline(cr, q);
     }
     for ex in [1.0_f64, -1.0] {
         if ex * vd.0 < 0.02 { continue; }
         let q = [p(ex*h,-fh,-fh), p(ex*h,fh,-fh), p(ex*h,fh,fh), p(ex*h,-fh,fh)];
         set_col(cr, lit(ex, 0.0, 0.0)); fill_quad(cr, q);
-        cr.set_source_rgba(0.5, 0.5, 0.5, alpha * 0.4); outline_quad(cr, q);
+        outline(cr, q);
     }
 
     // ── 12 edge strips (skipped when bevel_n == 0) ────────────────────────────
@@ -395,15 +402,31 @@ fn draw_cube(
     // ── Content label (always faces camera) ───────────────────────────────────
     let (fcx, fcy) = p(0.0, 0.0, 0.0);
     let font_px = h * 2.0 * scale * 0.55;
-    match cell.state {
-        CellState::Flagged => draw_label(cr, fcx, fcy, "🚩", 1.0, 0.6, 0.0, 1.0, font_px),
-        CellState::Revealed if cell.is_mine =>
-            draw_label(cr, fcx, fcy, "💣", 0.9, 0.9, 0.9, 1.0, font_px),
-        CellState::Revealed if cell.adjacent > 0 => {
-            let (nr, ng, nb_) = num_color(cell.adjacent);
-            draw_label(cr, fcx, fcy, &cell.adjacent.to_string(), nr, ng, nb_, alpha, font_px);
+    let dot_color: Option<(f64, f64, f64)> = match cell.state {
+        CellState::Flagged                        => Some((0.95, 0.15, 0.15)),
+        CellState::Revealed if cell.is_mine       => Some((0.05, 0.05, 0.05)),
+        CellState::Revealed if cell.adjacent > 0  => Some(num_color(cell.adjacent)),
+        _                                         => None,
+    };
+    if let Some((dr, dg, db)) = dot_color {
+        if font_px < 14.0 {
+            let dot_r = (font_px * 0.19).max(1.0);
+            cr.arc(fcx, fcy, dot_r, 0.0, 2.0 * PI);
+            cr.set_source_rgba(dr, dg, db, alpha);
+            let _ = cr.fill();
+        } else {
+            match cell.state {
+                CellState::Flagged =>
+                    draw_label(cr, fcx, fcy, "🚩", 1.0, 0.6, 0.0, 1.0, font_px),
+                CellState::Revealed if cell.is_mine =>
+                    draw_label(cr, fcx, fcy, "💣", 0.9, 0.9, 0.9, 1.0, font_px),
+                CellState::Revealed if cell.adjacent > 0 => {
+                    let (nr, ng, nb_) = num_color(cell.adjacent);
+                    draw_label(cr, fcx, fcy, &cell.adjacent.to_string(), nr, ng, nb_, alpha, font_px);
+                }
+                _ => {}
+            }
         }
-        _ => {}
     }
 }
 
@@ -445,8 +468,10 @@ fn draw_board(cr: &cairo::Context, game: &Game3D, az: f64, el: f64, w: f64, h: f
               lmin: usize, lmax: usize,
               rmin: usize, rmax: usize,
               cmin: usize, cmax: usize,
-              zoom: f64) {
-    cr.set_source_rgb(0.09, 0.09, 0.09);
+              zoom: f64, fast: bool,
+              tc: &super::ThemeColors) {
+    let [bgr, bgg, bgb] = tc.bg;
+    cr.set_source_rgb(bgr, bgg, bgb);
     let _ = cr.paint();
 
     let (sx, sy, sz) = (game.sx, game.sy, game.sz);
@@ -481,10 +506,12 @@ fn draw_board(cr: &cairo::Context, game: &Game3D, az: f64, el: f64, w: f64, h: f
     let depth_range = (depth_max - depth_min).max(1e-6);
 
     for &(depth, gx, gy, gz) in &cells {
-        let t = (depth - depth_min) / depth_range;   // 0 = farthest, 1 = nearest
-        let bevel_n = ((t * (MAX_BEVEL + 1) as f64) as usize).min(MAX_BEVEL);
+        let bevel_n = if fast { 0 } else {
+            let t = (depth - depth_min) / depth_range;   // 0 = farthest, 1 = nearest
+            ((t * (MAX_BEVEL + 1) as f64) as usize).min(MAX_BEVEL)
+        };
         let (wx, wy, wz) = cell_world(gx, gy, gz, hx, hy, hz);
-        draw_cube(cr, &game.grid[gz][gy][gx], wx, wy, wz, az, el, scx, scy, scale, bevel_n);
+        draw_cube(cr, &game.grid[gz][gy][gx], wx, wy, wz, az, el, scx, scy, scale, bevel_n, tc);
     }
 
     if game.state == GameState::Ready {
@@ -496,7 +523,8 @@ fn draw_board(cr: &cairo::Context, game: &Game3D, az: f64, el: f64, w: f64, h: f
         layout.set_font_description(Some(&fd));
         let (lw, _) = layout.pixel_size();
         cr.move_to(w / 2.0 - lw as f64 / 2.0, h - 16.0);
-        cr.set_source_rgba(0.6, 0.6, 0.6, 0.5);
+        let [fgr, fgg, fgb] = tc.fg;
+        cr.set_source_rgba(fgr, fgg, fgb, 0.5);
         pangocairo::functions::show_layout(cr, &layout);
     }
 }
@@ -723,7 +751,10 @@ pub fn create_board(ctx: &BoardContext) -> gtk4::Widget {
     let col_min   = Rc::new(RefCell::new(0usize));
     let col_max   = Rc::new(RefCell::new(sx.saturating_sub(1)));
 
-    let zoom = Rc::new(RefCell::new(1.0f64));
+    let zoom      = Rc::new(RefCell::new(1.0f64));
+    let fast_mode = Rc::new(RefCell::new(false));
+    // SourceId for debounce timer that restores full quality after scroll ends.
+    let fast_timer: Rc<RefCell<Option<glib::SourceId>>> = Rc::new(RefCell::new(None));
 
     let px = (DISPLAY + 20.0) as i32;
     let da = DrawingArea::new();
@@ -737,12 +768,14 @@ pub fn create_board(ctx: &BoardContext) -> gtk4::Widget {
         let rmin = row_min.clone();   let rmax = row_max.clone();
         let cmin = col_min.clone();   let cmax = col_max.clone();
         let zm   = zoom.clone();
-        da.set_draw_func(move |_, cr, w, h| {
+        let fm   = fast_mode.clone();
+        da.set_draw_func(move |widget, cr, w, h| {
+            let tc = super::get_theme_colors(widget);
             draw_board(cr, &g.borrow(), *az.borrow(), *el.borrow(), w as f64, h as f64,
                        *lmin.borrow(), *lmax.borrow(),
                        *rmin.borrow(), *rmax.borrow(),
                        *cmin.borrow(), *cmax.borrow(),
-                       *zm.borrow());
+                       *zm.borrow(), *fm.borrow(), &tc);
         });
     }
 
@@ -780,11 +813,12 @@ pub fn create_board(ctx: &BoardContext) -> gtk4::Widget {
         drag.connect_drag_update({
             let az = az.clone(); let el = el.clone();
             let az_start = az_start.clone(); let el_start = el_start.clone();
-            let da = da.clone();
+            let da = da.clone(); let fm = fast_mode.clone();
             move |_, dx, dy| {
                 if (dx * dx + dy * dy).sqrt() < CLICK_PX { return; }
                 *az.borrow_mut() = *az_start.borrow() + dx * DRAG_SENS;
                 *el.borrow_mut() = (*el_start.borrow() + dy * DRAG_SENS).clamp(-PI / 2.1, PI / 2.1);
+                *fm.borrow_mut() = true;
                 da.queue_draw();
             }
         });
@@ -797,10 +831,15 @@ pub fn create_board(ctx: &BoardContext) -> gtk4::Widget {
             let lmin = layer_min.clone(); let lmax = layer_max.clone();
             let rmin = row_min.clone();   let rmax = row_max.clone();
             let cmin = col_min.clone();   let cmax = col_max.clone();
-            let zm   = zoom.clone();
+            let zm   = zoom.clone(); let fm = fast_mode.clone();
             let (ml, fb, st, sr, tl) = (ml.clone(), fb.clone(), st.clone(), sr.clone(), tl.clone());
             move |_, dx, dy| {
-                if (dx * dx + dy * dy).sqrt() >= CLICK_PX { return; }
+                // Drag ended: restore full quality and render once at high fidelity.
+                *fm.borrow_mut() = false;
+                if (dx * dx + dy * dy).sqrt() >= CLICK_PX {
+                    da.queue_draw();
+                    return;
+                }
                 if !matches!(g.borrow().state, GameState::Ready | GameState::Playing) { return; }
                 let mx = *press_x.borrow() + dx;
                 let my = *press_y.borrow() + dy;
@@ -904,11 +943,35 @@ pub fn create_board(ctx: &BoardContext) -> gtk4::Widget {
     {
         let zm   = zoom.clone();
         let da_c = da.clone();
+        let fm   = fast_mode.clone();
+        let ft   = fast_timer.clone();
         let scroll = EventControllerScroll::new(gtk4::EventControllerScrollFlags::VERTICAL);
         scroll.connect_scroll(move |_, _dx, dy| {
-            let factor = if dy < 0.0 { 1.1 } else { 1.0 / 1.1 };
-            *zm.borrow_mut() = (*zm.borrow() * factor).clamp(0.2, 5.0);
+            let factor   = if dy < 0.0 { 1.1 } else { 1.0 / 1.1 };
+            // Read before write — avoids double-borrow panic.
+            let new_zoom = (*zm.borrow() * factor).clamp(0.2, 5.0);
+            *zm.borrow_mut() = new_zoom;
+
+            // Fast mode during scroll; restore full quality ~150 ms after last event.
+            if let Some(src) = ft.borrow_mut().take() { src.remove(); }
+            *fm.borrow_mut() = true;
             da_c.queue_draw();
+
+            let fm2  = fm.clone();
+            let da2  = da_c.clone();
+            let ft2  = ft.clone();
+            let src = glib::timeout_add_local(
+                std::time::Duration::from_millis(150),
+                move || {
+                    *fm2.borrow_mut() = false;
+                    da2.queue_draw();
+                    // Clear the stored SourceId before GLib removes it on Break,
+                    // so the next scroll event doesn't try to remove an invalid source.
+                    *ft2.borrow_mut() = None;
+                    glib::ControlFlow::Break
+                },
+            );
+            *ft.borrow_mut() = Some(src);
             glib::Propagation::Stop
         });
         da.add_controller(scroll);

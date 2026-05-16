@@ -21,10 +21,41 @@ pub mod rotation;
 pub mod crosswired;
 pub mod subtract;
 pub mod threed;
+pub mod ico;
+pub mod hyperbolic;
+pub mod voronoi;
+pub mod infinite;
+pub mod pvai;
 
 use gtk4::glib;
 use gtk4::prelude::*;
 use gtk4::{Button, GestureClick, Grid};
+
+// ── Theme-color helpers for Cairo-drawn variants ────────────────────────────
+
+pub(crate) struct ThemeColors {
+    pub bg: [f64; 3],   // window / canvas background
+    pub fg: [f64; 3],   // window foreground (text / outlines)
+}
+
+pub(crate) fn get_theme_colors(widget: &impl WidgetExt) -> ThemeColors {
+    let ctx = widget.style_context();
+    let c = |r: gtk4::gdk::RGBA| [r.red() as f64, r.green() as f64, r.blue() as f64];
+    let bg = ctx.lookup_color("window_bg_color")
+        .or_else(|| ctx.lookup_color("theme_bg_color"))
+        .map(c)
+        .unwrap_or([0.14, 0.14, 0.14]);
+    let fg = ctx.lookup_color("window_fg_color")
+        .or_else(|| ctx.lookup_color("theme_fg_color"))
+        .map(c)
+        .unwrap_or([0.90, 0.90, 0.90]);
+    ThemeColors { bg, fg }
+}
+
+/// Linear mix: a at t=0, b at t=1.
+pub(crate) fn mix3(a: [f64; 3], b: [f64; 3], t: f64) -> [f64; 3] {
+    [a[0]+(b[0]-a[0])*t, a[1]+(b[1]-a[1])*t, a[2]+(b[2]-a[2])*t]
+}
 use std::cell::RefCell;
 use std::rc::Rc;
 use std::time::Instant;
@@ -57,6 +88,11 @@ pub enum Variant {
     CrossWired,
     Subtract,
     Threed,
+    Ico,
+    Hyperbolic,
+    Voronoi,
+    Infinite,
+    PvAi,
 }
 
 /// Everything a variant board needs to wire up its interaction handlers.
@@ -97,6 +133,11 @@ pub fn create_board(variant: Variant, ctx: &BoardContext) -> gtk4::Widget {
         Variant::CrossWired  => crosswired::create_board(ctx),
         Variant::Subtract    => subtract::create_board(ctx),
         Variant::Threed      => threed::create_board(ctx),
+        Variant::Ico         => ico::create_board(ctx),
+        Variant::Hyperbolic  => hyperbolic::create_board(ctx),
+        Variant::Voronoi     => voronoi::create_board(ctx),
+        Variant::Infinite    => infinite::create_board(ctx),
+        Variant::PvAi        => pvai::create_board(ctx),
     }
 }
 
@@ -129,6 +170,11 @@ pub fn update_board(variant: Variant, game: &Rc<RefCell<Game>>, board: &gtk4::Wi
         Variant::CrossWired  => crosswired::update_board(game, board),
         Variant::Subtract    => subtract::update_board(game, board),
         Variant::Threed      => threed::update_board(game, board),
+        Variant::Ico         => ico::update_board(game, board),
+        Variant::Hyperbolic  => hyperbolic::update_board(game, board),
+        Variant::Voronoi     => voronoi::update_board(game, board),
+        Variant::Infinite    => infinite::update_board(game, board),
+        Variant::PvAi        => pvai::update_board(game, board),
     }
 }
 

@@ -167,8 +167,13 @@ fn post_action(
 
     apply_shift(&mut game.borrow_mut());
 
+    if !game.borrow().endless {
+        game.borrow_mut().check_win();
+    }
+
     if let Some(b) = board.borrow().as_ref() { update_board(game, b); }
     update_mine_counter(game, mine_label);
+    update_face(game, face_button, timer_source);
 }
 
 // ---------------------------------------------------------------------------

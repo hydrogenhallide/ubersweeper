@@ -29,10 +29,38 @@ struct Ctx {
     start_time:   Rc<RefCell<Option<Instant>>>,
     timer_source: Rc<RefCell<Option<glib::SourceId>>>,
     animating:    Rc<RefCell<bool>>,
+    counter_css:  gtk4::CssProvider,
+}
+
+fn precompute_counter_css() -> String {
+    // CSS @keyframes animation: runs once per rotation, started by adding "spinning"
+    // to each button.  GTK4 drives the animation internally — no per-frame work.
+    // delay = FRAME_MS so it starts with the first GskTransform frame.
+    // duration = (ANIM_FRAMES-1)*FRAME_MS so it ends at the last visual frame.
+    let delay_ms = FRAME_MS;
+    let dur_ms   = (ANIM_FRAMES - 1) as u64 * FRAME_MS;
+    format!(
+        "@keyframes rot-counter {{\
+            from {{ transform: rotate(0deg); }}\
+            to   {{ transform: rotate(-90deg); }}\
+        }}\
+        button.rot-lbl.spinning > label {{\
+            animation: rot-counter {dur_ms}ms ease-in-out {delay_ms}ms 1 normal forwards;\
+        }}"
+    )
 }
 
 impl Ctx {
     fn from(ctx: &BoardContext) -> Self {
+        let counter_css = gtk4::CssProvider::new();
+        counter_css.load_from_data(&precompute_counter_css());
+        if let Some(display) = gtk4::gdk::Display::default() {
+            gtk4::style_context_add_provider_for_display(
+                &display,
+                &counter_css,
+                gtk4::STYLE_PROVIDER_PRIORITY_APPLICATION + 1,
+            );
+        }
         Ctx {
             game:         ctx.game.clone(),
             board_widget: ctx.board_widget.clone(),
@@ -42,6 +70,7 @@ impl Ctx {
             start_time:   ctx.start_time.clone(),
             timer_source: ctx.timer_source.clone(),
             animating:    Rc::new(RefCell::new(false)),
+            counter_css,
         }
     }
 }
@@ -122,13 +151,24 @@ fn post_action(ctx: &Ctx) {
 // Rotation animation
 //
 // Rotates the inner Grid 0 → 90° around the board's centre using GskTransform.
-// At 90° the data is rotated via rotate_90_cw(), the grid is rebuilt, and the
-// transform resets to 0°.  Because the old board at 90° is visually identical
-// to the new board at 0°, the rebuild is imperceptible.
+// Runs ANIM_FRAMES+1 ticks: ticks 1..=ANIM_FRAMES are visual (the last one
+// lands at exactly 90° so the outer's size equals the post-rotation board,
+// eliminating the end-of-animation jolt).  Tick ANIM_FRAMES+1 rebuilds.
+//
+// Counter-rotation of labels is driven by a CSS @keyframes animation started
+// once (O(N) class adds) rather than per-frame, so GTK4 handles it internally.
 // ---------------------------------------------------------------------------
 
 fn animate_rotation(outer: Fixed, ctx: Ctx) {
     *ctx.animating.borrow_mut() = true;
+
+    // Start the CSS counter-rotation animation on every button before the first
+    // GskTransform tick fires.  One O(N) pass; no per-frame CSS work after this.
+    if let Some(inner_w) = outer.first_child() {
+        set_spinning(&inner_w, true);
+    }
+
+    let (cx, cy) = board_centre(&ctx.game);
     let frame = Rc::new(RefCell::new(0u32));
 
     glib::timeout_add_local(Duration::from_millis(FRAME_MS), move || {
@@ -140,20 +180,11 @@ fn animate_rotation(outer: Fixed, ctx: Ctx) {
         };
 
         if f < ANIM_FRAMES {
-            // Smoothstep easing: accelerate then decelerate
+            // Smoothstep easing: accelerate then decelerate.
             let t = f as f32 / ANIM_FRAMES as f32;
             let t = t * t * t * (t * (6.0 * t - 15.0) + 10.0);
             let angle = t * 90.0_f32;
 
-            let (cx, cy) = board_centre(&ctx.game);
-            let transform = gsk::Transform::new()
-                .translate(&graphene::Point::new(cx, cy))
-                .rotate(angle)
-                .translate(&graphene::Point::new(-cx, -cy));
-            outer.set_child_transform(&inner, Some(&transform));
-
-            // Resize the outer container each frame so the window tracks the
-            // rotating bounding box: w·cosθ + h·sinθ  ×  w·sinθ + h·cosθ
             let (w, h) = { let g = ctx.game.borrow(); (g.width, g.height) };
             let cell = CELL_SIZE as f32;
             let rad  = angle.to_radians();
@@ -162,12 +193,22 @@ fn animate_rotation(outer: Fixed, ctx: Ctx) {
             let bh = (w as f32 * cell * sin_a + h as f32 * cell * cos_a) as i32;
             outer.set_size_request(bw, bh);
 
+            // Board centre placed at the bounding-box centre (bw/2, bh/2).
+            // outer has halign=Center, so that point is always the screen
+            // centre of outer — the board centre never drifts per-frame.
+            let transform = gsk::Transform::new()
+                .translate(&graphene::Point::new(bw as f32 / 2.0, bh as f32 / 2.0))
+                .rotate(angle)
+                .translate(&graphene::Point::new(-cx, -cy));
+            outer.set_child_transform(&inner, Some(&transform));
+
             glib::ControlFlow::Continue
 
         } else {
-            // Animation complete.  Clear transform, rotate data, rebuild grid.
-            outer.set_child_transform(&inner, None);
-            outer.remove(&inner);
+            // Rebuild: remove inner directly without clearing its transform first.
+            // Clearing it would snap the grid back to 0° for one frame inside a
+            // wrongly-sized outer, which is the "jolt to the right" the user saw.
+            outer.remove(&inner); // child-transform state is discarded with the widget
 
             ctx.game.borrow_mut().rotate_90_cw();
 
@@ -177,7 +218,6 @@ fn animate_rotation(outer: Fixed, ctx: Ctx) {
             outer.set_size_request((w * CELL_SIZE as usize) as i32,
                                    (h * CELL_SIZE as usize) as i32);
 
-            // Paint the new grid immediately so there's no blank frame.
             update_board(&ctx.game, outer.upcast_ref());
             update_mine_counter(&ctx.game, &ctx.mine_label);
             update_face(&ctx.game, &ctx.face_button, &ctx.timer_source);
@@ -186,6 +226,16 @@ fn animate_rotation(outer: Fixed, ctx: Ctx) {
             glib::ControlFlow::Break
         }
     });
+}
+
+fn set_spinning(inner: &gtk4::Widget, on: bool) {
+    let grid = match inner.downcast_ref::<Grid>() { Some(g) => g, None => return };
+    let mut child = grid.first_child();
+    while let Some(w) = child {
+        child = w.next_sibling();
+        if on { w.add_css_class("spinning"); }
+        else  { w.remove_css_class("spinning"); }
+    }
 }
 
 fn board_centre(game: &Rc<RefCell<Game>>) -> (f32, f32) {
@@ -206,6 +256,7 @@ fn make_cell_button(x: usize, y: usize, ctx: &Ctx) -> Button {
     btn.set_halign(gtk4::Align::Center);
     btn.set_valign(gtk4::Align::Center);
     btn.add_css_class("cell");
+    btn.add_css_class("rot-lbl");
 
     // Left click - reveal or chord
     {
